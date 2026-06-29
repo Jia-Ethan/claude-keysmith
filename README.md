@@ -23,6 +23,20 @@
 >
 > `claude-keysmith` 是一个小型本地工具，用来管理 Claude Code `CLAUDE.md` 中的 import 区块，以及独立存放的 Markdown 指令文件。它不是 Claude Code 分叉版，不修改二进制，不劫持网络，不保存凭证、token、cookie 或 MCP 机密，也不保证安装后的指令一定改善模型行为。
 
+## 复制给智能体安装
+
+把下面这段话复制到 Codex、Claude Code、Cursor Agent 或其他智能体：
+
+```text
+请使用 https://github.com/Jia-Ethan/claude-keysmith 帮我安全安装 Claude Code 的 user scope 本地 CLAUDE.md import-block 指令文件，也就是写入 ~/.claude/CLAUDE.md 和 ~/.claude/keysmith/<name>.md。先阅读 README 和脚本，默认只做静态审计和 dry-run，不要直接写入；写入前展示将修改的准确文件路径、备份路径和 import block，并等我确认；确认后先备份再安装。不要修改 Claude Code 二进制、settings、MCP、网络、运行进程，也不要保存任何 token、cookie 或私密配置。
+```
+
+## 友链 / Community
+
+本项目接受 LINUX DO 社区佬友监督与反馈：[LINUX DO](https://linux.do)
+
+---
+
 ## Why this exists
 
 Claude Code already supports persistent instructions through `CLAUDE.md`, `CLAUDE.local.md`, project `.claude` files, and `@path/to/import` imports. This tool does not replace that system. It only gives you a safer, repeatable way to place one instruction file under a keysmith-managed directory and insert a small managed import block into the appropriate Claude memory file.
