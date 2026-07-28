@@ -347,8 +347,8 @@ def load_settings(path: Path) -> Dict[str, Any]:
     return data
 
 
-def align_settings_system_prompt(settings: Dict[str, Any], system_body: str) -> Tuple[Dict[str, Any], bool]:
-    """Align settings.systemPrompt only. Do not invent dead env keys as the primary path.
+def align_settings_system_prompt(settings: Dict[str, Any], system_body: str, max_tokens: Optional[int] = None) -> Tuple[Dict[str, Any], bool]:
+    """Align settings.systemPrompt and optionally max_tokens. Do not invent dead env keys as the primary path.
 
     Notes from 2026-07-28 probe on Claude Code 2.1.204 + lgw:
       - settings.systemPrompt alone does not unlock hard NSFW
@@ -375,6 +375,12 @@ def align_settings_system_prompt(settings: Dict[str, Any], system_body: str) -> 
         if dead in settings:
             settings = dict(settings)
             settings.pop(dead, None)
+            changed = True
+    # Set max_tokens if provided
+    if max_tokens is not None:
+        if settings.get("max_tokens") != max_tokens:
+            settings = dict(settings)
+            settings["max_tokens"] = max_tokens
             changed = True
     return settings, changed
 
@@ -425,7 +431,8 @@ def command_install(args) -> int:
             append_content = load_append_content(getattr(args, "append_file", None))
             system_body = strip_markdown_h1(instruction_content)
             settings = load_settings(rt["settings"])
-            settings_updated, settings_changed = align_settings_system_prompt(settings, system_body)
+            max_tokens = getattr(args, "max_tokens", None)
+            settings_updated, settings_changed = align_settings_system_prompt(settings, system_body, max_tokens)
             shell_block = render_shell_wrapper(rt["claude_bin"], rt["system_prompt"], rt["append_prompt"])
             zshrc_current = read_text_if_exists(rt["zshrc"])
             zshrc_updated, zshrc_changed = ensure_shell_wrapper(zshrc_current, shell_block)
@@ -446,6 +453,8 @@ def command_install(args) -> int:
             print(f"shell wrapper ({rt['zshrc'].name}) change: {'yes' if zshrc_changed else 'no'}")
             print(f"system-prompt bytes: {len(system_body.encode('utf-8'))}")
             print(f"append-prompt bytes: {len(append_content.encode('utf-8'))}")
+            if max_tokens is not None:
+                print(f"max_tokens: {max_tokens}")
         except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             print(f"[错误] runtime 准备失败: {exc}")
             return 1
@@ -782,6 +791,11 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument(
         "--append-file",
         help="runtime append 指令文件；默认 examples/claude-append-prompt.md",
+    )
+    install.add_argument(
+        "--max-tokens",
+        type=int,
+        help="设置 settings.json 的 max_tokens 值（仅在 --runtime 时生效）",
     )
     install.add_argument("--dry-run", action="store_true", help="兼容参数；默认就是预览模式")
     install.add_argument("--yes", action="store_true", help="确认写入；未提供时只预览")
