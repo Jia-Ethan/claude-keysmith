@@ -300,7 +300,7 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
     append_prompt = claude_dir / "keysmith" / "append-prompt.md"
     assert system_prompt.exists()
     assert append_prompt.exists()
-    assert "senior engineer and writer" in system_prompt.read_text(encoding="utf-8")
+    assert "senior research engineer and technical writer" in system_prompt.read_text(encoding="utf-8")
     assert "intimate adult fiction" in append_prompt.read_text(encoding="utf-8")
 
     settings = (claude_dir / "settings.json").read_text(encoding="utf-8")
@@ -315,3 +315,27 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
 
     status = run_cli(["status", "--scope", "user", "--runtime", "--json"], home=home)
     assert '"runtime_ready": true' in status.stdout or '"runtime_ready": true' in status.stdout.replace("True", "true")
+
+
+def test_runtime_install_sets_max_tokens_only_when_explicit(tmp_path):
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text('{"model": "opus", "keep": true}\n', encoding="utf-8")
+    (home / ".zshrc").write_text("", encoding="utf-8")
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "claude").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    result = run_cli(
+        ["install", "--scope", "user", "--runtime", "--max-tokens", "32000", "--yes"],
+        home=home,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    import json
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    assert settings["max_tokens"] == 32000
+    assert settings["keep"] is True
+    assert "systemPrompt" in settings
