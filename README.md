@@ -19,9 +19,9 @@
 
 > **Status boundary / 状态边界**
 >
-> `claude-keysmith` is a small local helper for managing Claude Code `CLAUDE.md` import blocks and separate Markdown instruction files. It is not a Claude Code fork, does not patch binaries, does not intercept network traffic, does not save credentials, tokens, cookies, or MCP secrets, and does not guarantee that installed instructions will improve model behavior.
+> `claude-keysmith` is a small local helper for managing Claude Code `CLAUDE.md` import blocks, separate Markdown instruction files, and an optional user-scope runtime wrapper. It is not a Claude Code fork, does not patch binaries, does not intercept network traffic, does not save credentials, tokens, cookies, or MCP secrets, and does not guarantee that installed instructions will unlock every model behavior on every provider.
 >
-> `claude-keysmith` 是一个小型本地工具，用来管理 Claude Code `CLAUDE.md` 中的 import 区块，以及独立存放的 Markdown 指令文件。它不是 Claude Code 分叉版，不修改二进制，不劫持网络，不保存凭证、token、cookie 或 MCP 机密，也不保证安装后的指令一定改善模型行为。
+> `claude-keysmith` 是一个小型本地工具，用来管理 Claude Code `CLAUDE.md` 中的 import 区块、独立 Markdown 指令文件，以及可选的 user-scope runtime 包装层。它不是 Claude Code 分叉版，不修改二进制，不劫持网络，不保存凭证、token、cookie 或 MCP 机密，也不保证安装后在每个供应商/模型上都能突破全部内容策略。
 
 ## 复制给智能体安装
 
@@ -91,7 +91,7 @@ Managed block example:
 - `uninstall` 只移除同名 managed block，并备份后移除对应 keysmith 指令文件。
 - `restore` 会先备份当前 target，再用指定 backup 恢复。
 - `--name` 只允许字母、数字、点、下划线、连字符，拒绝路径、绝对路径、`..`、空文件名和空格。
-- 不修改 `~/.claude/settings.json`、`.claude/settings.json`、MCP、凭证、二进制或运行中进程。
+- 默认不修改 `settings.json`、MCP、凭证、二进制或运行中进程；仅当显式传入 `--runtime` 时，才对齐 `settings.systemPrompt` 并写入 managed shell wrapper（仍不碰 token / Base URL / MCP / 二进制）。
 
 ### 快速开始
 
@@ -135,6 +135,51 @@ python3 claude-instruct.py install \
   --project-dir /path/to/repo \
   --file ./my-claude-rules.md \
   --name team-rules \
+  --yes
+```
+
+
+### runtime 注入（user scope，可选）
+
+仅 import block **不够**。在当前 Claude Code（实测 `2.1.204` + lgw）上，硬性成人向创作还需要 CLI 层的 append：
+
+```bash
+python3 claude-instruct.py install --scope user --runtime --yes
+python3 claude-instruct.py status --scope user --runtime
+python3 claude-instruct.py doctor
+```
+
+`--runtime` 会额外写入：
+
+| 路径 | 作用 |
+|---|---|
+| `~/.claude/keysmith/system-prompt.md` | 去 H1 后的 system 正文 |
+| `~/.claude/keysmith/append-prompt.md` | 创意/成人向直接交付的 append 正文 |
+| `~/.claude/settings.json` 的 `systemPrompt` | 与 system-prompt 对齐（**单独不够**） |
+| `~/.zshrc` 中 managed `claude()` | 自动附加 `--system-prompt-file` + `--append-system-prompt-file` |
+
+安全边界：
+
+- 默认仍是 dry-run；必须 `--yes` 才写入
+- 不改 Claude 二进制、MCP、网络、token
+- 不把 Base URL / token 写入仓库或文档
+- `settings.appendSystemPrompt` 在当前版本探测中**未生效**；真正有效的是 CLI append 参数
+- 模型策略仍可能随机拒绝；`claude-opus-5` 优于 fable/sonnet；“续写/场景承接”比“冷开硬写”更稳
+
+安装后：
+
+```bash
+source ~/.zshrc
+claude   # 已自动带上 system + append
+```
+
+自定义 append 文本：
+
+```bash
+python3 claude-instruct.py install \
+  --scope user \
+  --runtime \
+  --append-file ./my-append.md \
   --yes
 ```
 
@@ -218,6 +263,18 @@ claude-keysmith/
 - 不管理 `.claude/rules/`、settings、hooks、permissions、MCP 或自动记忆目录。
 
 ---
+
+
+### Runtime injection (optional, user scope)
+
+Import blocks alone are not enough for hard creative/NSFW delivery on current Claude Code builds. Use:
+
+```bash
+python3 claude-instruct.py install --scope user --runtime --yes
+python3 claude-instruct.py doctor
+```
+
+This writes `system-prompt.md`, `append-prompt.md`, aligns `settings.systemPrompt`, and installs a managed `claude()` shell wrapper that passes `--system-prompt-file` plus `--append-system-prompt-file`. It still does not patch binaries, store tokens, or guarantee provider-side policy bypass.
 
 ## English
 

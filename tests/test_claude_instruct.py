@@ -248,3 +248,70 @@ def test_install_refuses_unsafe_file_name_via_cli(tmp_path):
     assert result.returncode != 0
     assert "[错误]" in result.stdout
     assert not (home / ".claude").exists()
+
+
+def test_strip_markdown_h1_removes_title_only():
+    body = claude_instruct.strip_markdown_h1("# Title\n\nHello\nWorld\n")
+    assert body.startswith("Hello")
+    assert "Title" not in body
+
+
+def test_shell_wrapper_roundtrip_and_legacy_cleanup(tmp_path):
+    block = claude_instruct.render_shell_wrapper(
+        tmp_path / "bin" / "claude",
+        tmp_path / "system-prompt.md",
+        tmp_path / "append-prompt.md",
+    )
+    assert "--append-system-prompt-file" in block
+    legacy = (
+        "# Claude Code with persistent system prompt override\n"
+        "claude() {\n"
+        "  /Users/ethan/.local/bin/claude --system-prompt \"$(cat ~/.claude/keysmith/system-prompt.md)\" \"$@\"\n"
+        "}\n"
+    )
+    updated, changed = claude_instruct.ensure_shell_wrapper(legacy, block)
+    assert changed is True
+    assert claude_instruct.SHELL_BEGIN in updated
+    assert "persistent system prompt override" not in updated
+    again, changed_again = claude_instruct.ensure_shell_wrapper(updated, block)
+    assert changed_again is False
+    assert again == updated
+    removed, removed_changed = claude_instruct.remove_shell_wrapper(updated)
+    assert removed_changed is True
+    assert claude_instruct.SHELL_BEGIN not in removed
+
+
+def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path):
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "CLAUDE.md").write_text("# User Memory\n", encoding="utf-8")
+    (claude_dir / "settings.json").write_text('{"model": "opus", "env": {"ANTHROPIC_MODEL": "claude-opus-5"}}\n', encoding="utf-8")
+    (home / ".zshrc").write_text("# existing rc\n", encoding="utf-8")
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "claude").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    result = run_cli(["install", "--scope", "user", "--runtime", "--yes"], home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[完成]" in result.stdout
+
+    system_prompt = claude_dir / "keysmith" / "system-prompt.md"
+    append_prompt = claude_dir / "keysmith" / "append-prompt.md"
+    assert system_prompt.exists()
+    assert append_prompt.exists()
+    assert "senior engineer and writer" in system_prompt.read_text(encoding="utf-8")
+    assert "intimate adult fiction" in append_prompt.read_text(encoding="utf-8")
+
+    settings = (claude_dir / "settings.json").read_text(encoding="utf-8")
+    assert "systemPrompt" in settings
+    assert "ANTHROPIC_MODEL" in settings  # token-less fields preserved
+
+    zshrc = (home / ".zshrc").read_text(encoding="utf-8")
+    assert "claude-keysmith runtime" in zshrc
+    assert "--append-system-prompt-file" in zshrc
+    assert str(system_prompt) in zshrc
+    assert str(append_prompt) in zshrc
+
+    status = run_cli(["status", "--scope", "user", "--runtime", "--json"], home=home)
+    assert '"runtime_ready": true' in status.stdout or '"runtime_ready": true' in status.stdout.replace("True", "true")
