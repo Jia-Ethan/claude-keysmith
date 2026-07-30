@@ -26,7 +26,7 @@
 
 `claude-keysmith` 是 Claude Code 的本地指令部署工具：它把一份 Markdown 指令保存到 keysmith 管理目录，并在 `CLAUDE.md` 或 `CLAUDE.local.md` 中插入可识别、可卸载的 import block。
 
-可选的 `--runtime` 会额外对齐 `settings.json` 的 `systemPrompt`，并在 `~/.zshrc` 安装 managed `claude()` wrapper，使每次 shell 调用自动带上 `--system-prompt-file` 与 `--append-system-prompt-file`。
+可选的 `--runtime` 会额外对齐 `settings.json` 的 `systemPrompt`，并安装 managed shell wrapper，使每次 shell 调用自动带上 `--system-prompt-file` 与 `--append-system-prompt-file`：macOS / Linux 使用 `~/.zshrc` 中的 `claude()`，Windows PowerShell 使用 profile 中的 `function global:claude`。
 
 默认只预览；显式传入 `--yes` 才写入。写入前备份，卸载时只移除自己的 block 和文件。
 
@@ -65,6 +65,17 @@ source ~/.zshrc
 python3 claude-instruct.py doctor --json
 ```
 
+Windows PowerShell：
+
+```powershell
+python .\claude-instruct.py install --scope user --runtime       # 先预览
+python .\claude-instruct.py install --scope user --runtime --yes
+. $PROFILE
+python .\claude-instruct.py doctor --json
+```
+
+Windows 可用以下可选环境变量覆盖自动检测：`CLAUDE_KEYSMITH_HOME`、`CLAUDE_KEYSMITH_SHELL`、`CLAUDE_KEYSMITH_SHELL_RC`、`CLAUDE_KEYSMITH_CLAUDE_BIN`。
+
 不要用 `curl | python` 直接执行；先下载或 clone 仓库、检查脚本与示例，再运行。
 
 ### 它会改哪些文件
@@ -75,7 +86,7 @@ python3 claude-instruct.py doctor --json
 | 相邻的 `keysmith/<name>.md` 或 `.claude/keysmith/<name>.md` | 新建，或先备份再替换 |
 | `~/.claude/keysmith/system-prompt.md`、`append-prompt.md` | 仅 `--runtime`：新建或备份后替换 |
 | `~/.claude/settings.json` | 仅 `--runtime`：对齐顶层 `systemPrompt`；使用 `--max-tokens` 时才更新该字段；其余字段保留 |
-| `~/.zshrc` | 仅 `--runtime`：插入或替换一个带边界标记的 managed `claude()` wrapper；已有文件先备份 |
+| `~/.zshrc`（macOS / Linux）或 PowerShell profile（Windows） | 仅 `--runtime`：插入或替换一个带边界标记的 managed wrapper；已有文件先备份 |
 
 完整所有权、settings 更新与恢复语义见 [`docs/reference.md`](docs/reference.md)。
 
@@ -107,12 +118,13 @@ python3 claude-instruct.py restore \
 | --- | --- |
 | 不确定会改什么 | 不加 `--yes` 运行同一条 `install` / `uninstall`，检查 dry-run 输出 |
 | import block 或文件状态异常 | 运行 `status --scope … --json`，确认目标路径、block 与指令文件 |
-| runtime 看起来没有生效 | `source ~/.zshrc` 后运行 `doctor --json`，确认 prompt 文件、settings 对齐与 managed wrapper |
+| runtime 看起来没有生效 | macOS / Linux 先 `source ~/.zshrc`，Windows 先 `. $PROFILE`；然后运行 `doctor --json`，确认 prompt 文件、settings 对齐与 managed wrapper |
 | 需要回滚 | 指定对应的 timestamp 备份运行 `restore`；恢复前工具会再为当前文件创建备份 |
 
 ### 兼容性与限制
 
-- 推荐 Python 3.8+；runtime wrapper 当前写入 `~/.zshrc`，适用于 zsh。
+- 推荐 Python 3.8+；runtime wrapper 支持 macOS / Linux 的 zsh 与 Windows 的 PowerShell。
+- Windows 默认检测 PowerShell profile 与 npm 全局安装的 `claude.cmd`；可用 `CLAUDE_KEYSMITH_*` 环境变量覆盖路径。
 - 只管理 `claude-keysmith` 自己插入的 HTML 注释 block，不覆盖用户其余 memory 内容。
 - 不管理 Claude Code 二进制、运行中进程、网络、MCP、token、cookie、Base URL、hooks 或 permissions。
 - 不验证某个既有会话是否重新加载指令；部署后启动新会话并做实际 smoke test。

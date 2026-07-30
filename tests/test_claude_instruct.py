@@ -1,3 +1,5 @@
+import json
+
 import importlib.util
 import os
 import subprocess
@@ -11,10 +13,19 @@ sys.modules[spec.name] = claude_instruct
 spec.loader.exec_module(claude_instruct)
 
 
-def run_cli(args, *, home, cwd=None, check=True):
+def run_cli(args, *, home, cwd=None, check=True, extra_env=None):
     env = os.environ.copy()
     env["HOME"] = str(home)
     env.pop("CLAUDE_CONFIG_DIR", None)
+    for key in (
+        "CLAUDE_KEYSMITH_HOME",
+        "CLAUDE_KEYSMITH_SHELL",
+        "CLAUDE_KEYSMITH_SHELL_RC",
+        "CLAUDE_KEYSMITH_CLAUDE_BIN",
+    ):
+        env.pop(key, None)
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [sys.executable, str(MODULE_PATH), *args],
         cwd=str(cwd) if cwd else None,
@@ -339,3 +350,119 @@ def test_runtime_install_sets_max_tokens_only_when_explicit(tmp_path):
     assert settings["max_tokens"] == 32000
     assert settings["keep"] is True
     assert "systemPrompt" in settings
+
+
+def test_resolve_home_prefers_env_overrides(tmp_path, monkeypatch):
+    override = tmp_path / "override-home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(override))
+    monkeypatch.setenv("HOME", str(tmp_path / "env-home"))
+    assert claude_instruct.resolve_home() == override.resolve()
+
+    monkeypatch.delenv("CLAUDE_KEYSMITH_HOME")
+    assert claude_instruct.resolve_home() == (tmp_path / "env-home").resolve()
+
+
+def test_shell_kind_and_windows_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_KEYSMITH_SHELL", "powershell")
+    assert claude_instruct.runtime_shell_kind() == "powershell"
+
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL")
+    assert claude_instruct.runtime_shell_kind() in {"powershell", "zsh"}
+
+    profile_override = tmp_path / "Documents" / "PowerShell" / "profile.ps1"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_SHELL_RC", str(profile_override))
+    assert claude_instruct.powershell_profile_path(tmp_path) == profile_override.resolve()
+
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC")
+    monkeypatch.setenv("PSModulePath", "C:\\Program Files\\PowerShell\\Modules")
+    assert claude_instruct.powershell_profile_path(tmp_path).name == "Microsoft.PowerShell_profile.ps1"
+    assert "PowerShell" in claude_instruct.powershell_profile_path(tmp_path).parts
+
+
+def test_find_claude_binary_override_and_unix_fallback(tmp_path, monkeypatch):
+    explicit = tmp_path / "bin" / "claude.cmd"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_CLAUDE_BIN", str(explicit))
+    assert claude_instruct.find_claude_binary(tmp_path, "powershell") == explicit.resolve()
+
+    monkeypatch.delenv("CLAUDE_KEYSMITH_CLAUDE_BIN")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+    unix_fallback = claude_instruct.find_claude_binary(tmp_path, "zsh")
+    assert unix_fallback == (tmp_path / ".local" / "bin" / "claude").resolve()
+
+
+def test_render_powershell_wrapper_escapes_single_quotes(tmp_path):
+    claude_bin = tmp_path / "claude's" / "claude.cmd"
+    system_prompt = tmp_path / "system-prompt.md"
+    append_prompt = tmp_path / "append-prompt.md"
+
+    block = claude_instruct.render_shell_wrapper(
+        claude_bin,
+        system_prompt,
+        append_prompt,
+        shell_kind="powershell",
+    )
+
+    assert "function global:claude" in block
+    assert "@args" in block
+    assert "''" in block
+    assert "--system-prompt-file" in block
+    assert "--append-system-prompt-file" in block
+    assert "claude() {" not in block
+
+
+def test_windows_style_runtime_install_uses_powershell_profile(tmp_path):
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "CLAUDE.md").write_text("# User Memory\n", encoding="utf-8")
+    (claude_dir / "settings.json").write_text('{"model": "opus"}\n', encoding="utf-8")
+
+    profile = home / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("# existing powershell profile\n", encoding="utf-8")
+
+    claude_bin = home / "AppData" / "Roaming" / "npm" / "claude.cmd"
+    claude_bin.parent.mkdir(parents=True)
+    claude_bin.write_text("@echo off\n", encoding="utf-8")
+
+    extra_env = {
+        "CLAUDE_KEYSMITH_SHELL": "powershell",
+        "CLAUDE_KEYSMITH_SHELL_RC": str(profile),
+        "CLAUDE_KEYSMITH_CLAUDE_BIN": str(claude_bin),
+    }
+
+    result = run_cli(
+        ["install", "--scope", "user", "--runtime", "--yes"],
+        home=home,
+        extra_env=extra_env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "shell kind: powershell" in result.stdout
+    assert ". $PROFILE" in result.stdout
+
+    profile_text = profile.read_text(encoding="utf-8")
+    assert "function global:claude" in profile_text
+    assert "@args" in profile_text
+    assert "--system-prompt-file" in profile_text
+    assert "--append-system-prompt-file" in profile_text
+    assert str(claude_bin) in profile_text
+
+    status = run_cli(
+        ["status", "--scope", "user", "--runtime", "--json"],
+        home=home,
+        extra_env=extra_env,
+    )
+    status_json = json.loads(status.stdout)
+    assert status_json["runtime"]["shell_kind"] == "powershell"
+    assert Path(status_json["runtime"]["shell_rc"]) == profile.resolve()
+    assert status_json["runtime"]["runtime_ready"] is True
+
+    uninstall = run_cli(
+        ["uninstall", "--scope", "user", "--runtime", "--yes"],
+        home=home,
+        extra_env=extra_env,
+    )
+    assert uninstall.returncode == 0, uninstall.stdout + uninstall.stderr
+    profile_after = profile.read_text(encoding="utf-8")
+    assert "claude-keysmith runtime" not in profile_after
+    assert "# existing powershell profile" in profile_after

@@ -191,9 +191,70 @@ def remove_import_block(content: str, name: str) -> Tuple[str, bool]:
     return updated, bool(count)
 
 
+def resolve_home() -> Path:
+    """Resolve home dir: $CLAUDE_KEYSMITH_HOME > $HOME > Path.home().
+
+    Windows workaround: Path.home() reads USERPROFILE and ignores $HOME
+    set by Git Bash / MSYS2. This helper preserves Unix $HOME behaviour.
+    """
+    configured = (
+        os.environ.get("CLAUDE_KEYSMITH_HOME")
+        or os.environ.get("HOME")
+    )
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.home().resolve()
+
+
+def runtime_shell_kind() -> str:
+    """Return 'powershell' on Windows (os.name == 'nt'), else 'zsh'.
+
+    Override with $CLAUDE_KEYSMITH_SHELL.
+    """
+    configured = os.environ.get("CLAUDE_KEYSMITH_SHELL", "").strip().lower()
+    if configured:
+        return configured
+    return "powershell" if os.name == "nt" else "zsh"
+
+
+def powershell_profile_path(home: Path) -> Path:
+    """Locate PowerShell profile for PS5 (WindowsPowerShell) or PS7 (PowerShell).
+
+    Override with $CLAUDE_KEYSMITH_SHELL_RC.
+    """
+    configured = os.environ.get("CLAUDE_KEYSMITH_SHELL_RC")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    module_path = os.environ.get("PSModulePath", "")
+    profile_dir = "WindowsPowerShell" if "WindowsPowerShell" in module_path else "PowerShell"
+    return home / "Documents" / profile_dir / "Microsoft.PowerShell_profile.ps1"
+
+
+def find_claude_binary(home: Path, shell_kind: str) -> Path:
+    """Locate the claude binary for the current platform.
+
+    Override with $CLAUDE_KEYSMITH_CLAUDE_BIN.
+    """
+    configured = os.environ.get("CLAUDE_KEYSMITH_CLAUDE_BIN")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if shell_kind == "powershell":
+        found = (
+            shutil.which("claude.cmd")
+            or shutil.which("claude.exe")
+            or shutil.which("claude")
+        )
+        if found:
+            return Path(found).resolve()
+        appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
+        return appdata / "npm" / "claude.cmd"
+    found = shutil.which("claude")
+    return Path(found).resolve() if found else home / ".local" / "bin" / "claude"
+
+
 def resolve_scope(scope: str, project_dir: Optional[str] = None) -> ScopePaths:
     if scope == "user":
-        claude_root = (Path.home() / ".claude").resolve()
+        claude_root = (resolve_home() / ".claude").resolve()
         return ScopePaths(
             scope="user",
             root=claude_root,
@@ -257,9 +318,13 @@ def describe_scope(paths: ScopePaths, md_filename: str) -> None:
     print(f"import target: {paths.import_target(md_filename)}")
 
 
-def user_runtime_paths() -> Dict[str, Path]:
-    home = Path.home()
+def user_runtime_paths() -> Dict[str, Any]:
+    """Return runtime paths with platform-aware shell and binary locations."""
+    home = resolve_home()
+    shell_kind = runtime_shell_kind()
     keysmith_dir = home / ".claude" / "keysmith"
+    shell_rc = powershell_profile_path(home) if shell_kind == "powershell" else home / ".zshrc"
+    claude_bin = find_claude_binary(home, shell_kind)
     return {
         "home": home,
         "claude_dir": home / ".claude",
@@ -267,12 +332,35 @@ def user_runtime_paths() -> Dict[str, Path]:
         "system_prompt": keysmith_dir / "system-prompt.md",
         "append_prompt": keysmith_dir / "append-prompt.md",
         "settings": home / ".claude" / "settings.json",
-        "zshrc": home / ".zshrc",
-        "claude_bin": home / ".local" / "bin" / "claude",
+        "shell_kind": shell_kind,
+        "shell_rc": shell_rc,
+        "zshrc": shell_rc,  # backward-compat alias
+        "claude_bin": claude_bin,
     }
 
 
-def render_shell_wrapper(claude_bin: Path, system_prompt: Path, append_prompt: Path) -> str:
+def _powershell_quote(value: Path) -> str:
+    """PowerShell single-quote escaping."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def render_shell_wrapper(claude_bin: Path, system_prompt: Path, append_prompt: Path, shell_kind: str = "zsh") -> str:
+    """Generate a managed shell wrapper for zsh or PowerShell."""
+    if shell_kind == "powershell":
+        return "\n".join(
+            [
+                SHELL_BEGIN,
+                "# Managed by claude-keysmith. Do not edit by hand.",
+                "function global:claude {",
+                f"  & {_powershell_quote(claude_bin)} `",
+                f"    --system-prompt-file {_powershell_quote(system_prompt)} `",
+                f"    --append-system-prompt-file {_powershell_quote(append_prompt)} `",
+                "    @args",
+                "}",
+                SHELL_END,
+                "",
+            ]
+        )
     # Keep paths expandable and absolute for reliability across shells.
     return "\n".join(
         [
@@ -433,24 +521,25 @@ def command_install(args) -> int:
             settings = load_settings(rt["settings"])
             max_tokens = getattr(args, "max_tokens", None)
             settings_updated, settings_changed = align_settings_system_prompt(settings, system_body, max_tokens)
-            shell_block = render_shell_wrapper(rt["claude_bin"], rt["system_prompt"], rt["append_prompt"])
-            zshrc_current = read_text_if_exists(rt["zshrc"])
-            zshrc_updated, zshrc_changed = ensure_shell_wrapper(zshrc_current, shell_block)
+            shell_block = render_shell_wrapper(rt["claude_bin"], rt["system_prompt"], rt["append_prompt"], rt["shell_kind"])
+            shell_rc_current = read_text_if_exists(rt["shell_rc"])
+            shell_rc_updated, shell_rc_changed = ensure_shell_wrapper(shell_rc_current, shell_block)
             runtime_plan = {
                 "paths": rt,
                 "system_body": system_body,
                 "append_content": append_content,
                 "settings": settings_updated,
                 "settings_changed": settings_changed,
-                "zshrc_updated": zshrc_updated,
-                "zshrc_changed": zshrc_changed,
+                "shell_rc_updated": shell_rc_updated,
+                "shell_rc_changed": shell_rc_changed,
                 "shell_block": shell_block,
             }
+            print(f"shell kind: {rt['shell_kind']}")
             print(f"system-prompt file: {rt['system_prompt']}")
             print(f"append-prompt file: {rt['append_prompt']}")
             print(f"settings.json: {rt['settings']}")
             print(f"settings.systemPrompt change: {'yes' if settings_changed else 'no'}")
-            print(f"shell wrapper ({rt['zshrc'].name}) change: {'yes' if zshrc_changed else 'no'}")
+            print(f"shell wrapper ({rt['shell_rc'].name}) change: {'yes' if shell_rc_changed else 'no'}")
             print(f"system-prompt bytes: {len(system_body.encode('utf-8'))}")
             print(f"append-prompt bytes: {len(append_content.encode('utf-8'))}")
             if max_tokens is not None:
@@ -493,12 +582,15 @@ def command_install(args) -> int:
         write_settings(rt["settings"], runtime_plan["settings"])
         print(f"[写入] {rt['settings']} (systemPrompt aligned; token/base URL untouched)")
 
-        if rt["zshrc"].exists():
-            backup = backup_file(rt["zshrc"], timestamp, suffix="pre_runtime")
-            print(f"[备份] {rt['zshrc'].name} → {backup.name}")
-        atomic_write_text(rt["zshrc"], runtime_plan["zshrc_updated"])
-        print(f"[写入] {rt['zshrc']} (managed claude() wrapper)")
-        print("[提示] 新开一个 shell，或执行: source ~/.zshrc")
+        if rt["shell_rc"].exists():
+            backup = backup_file(rt["shell_rc"], timestamp, suffix="pre_runtime")
+            print(f"[备份] {rt['shell_rc'].name} → {backup.name}")
+        atomic_write_text(rt["shell_rc"], runtime_plan["shell_rc_updated"])
+        print(f"[写入] {rt['shell_rc']} (managed claude wrapper)")
+        if rt["shell_kind"] == "powershell":
+            print("[提示] 新开一个 PowerShell，或执行: . $PROFILE")
+        else:
+            print("[提示] 新开一个 shell，或执行: source ~/.zshrc")
         print("[提示] 有效路径是 CLI --system-prompt-file + --append-system-prompt-file；模型建议 claude-opus-5。")
 
     print("[完成] install 已完成。")
@@ -536,15 +628,16 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
             settings = load_settings(rt["settings"]) if rt["settings"].exists() else {}
             system_body = read_text_if_exists(rt["system_prompt"])
             settings_aligned = bool(system_body) and settings.get("systemPrompt") == system_body
-            zshrc = read_text_if_exists(rt["zshrc"])
-            wrapper_present = bool(shell_block_pattern().search(zshrc)) or bool(LEGACY_WRAPPER_RE.search(zshrc))
-            managed_wrapper = bool(shell_block_pattern().search(zshrc))
+            shell_rc_content = read_text_if_exists(rt["shell_rc"])
+            wrapper_present = bool(shell_block_pattern().search(shell_rc_content)) or bool(LEGACY_WRAPPER_RE.search(shell_rc_content))
+            managed_wrapper = bool(shell_block_pattern().search(shell_rc_content))
             status["runtime"] = {
                 "supported": True,
+                "shell_kind": rt["shell_kind"],
                 "system_prompt_file": str(rt["system_prompt"]),
                 "append_prompt_file": str(rt["append_prompt"]),
                 "settings_file": str(rt["settings"]),
-                "shell_rc": str(rt["zshrc"]),
+                "shell_rc": str(rt["shell_rc"]),
                 "system_prompt_exists": system_exists,
                 "append_prompt_exists": append_exists,
                 "settings_system_prompt_aligned": settings_aligned,
@@ -585,6 +678,7 @@ def command_status(args) -> int:
         if not rt.get("supported"):
             print(f"runtime: unsupported ({rt.get('reason')})")
         else:
+            print(f"shell kind: {rt.get('shell_kind', 'N/A')}")
             print(f"system-prompt file: {'yes' if rt['system_prompt_exists'] else 'no'} ({rt['system_prompt_file']})")
             print(f"append-prompt file: {'yes' if rt['append_prompt_exists'] else 'no'} ({rt['append_prompt_file']})")
             print(f"settings.systemPrompt aligned: {'yes' if rt['settings_system_prompt_aligned'] else 'no'}")
@@ -619,14 +713,15 @@ def command_uninstall(args) -> int:
     print(f"runtime uninstall: {'yes' if runtime else 'no'}")
 
     rt = user_runtime_paths() if runtime else None
-    zshrc_updated = ""
-    zshrc_changed = False
+    shell_rc_updated = ""
+    shell_rc_changed = False
     if runtime and rt is not None:
-        zshrc_current = read_text_if_exists(rt["zshrc"])
-        zshrc_updated, zshrc_changed = remove_shell_wrapper(zshrc_current)
+        shell_rc_current = read_text_if_exists(rt["shell_rc"])
+        shell_rc_updated, shell_rc_changed = remove_shell_wrapper(shell_rc_current)
+        print(f"shell kind: {rt['shell_kind']}")
         print(f"remove system-prompt: {'yes' if rt['system_prompt'].exists() else 'no'}")
         print(f"remove append-prompt: {'yes' if rt['append_prompt'].exists() else 'no'}")
-        print(f"remove shell wrapper: {'yes' if zshrc_changed else 'no'}")
+        print(f"remove shell wrapper: {'yes' if shell_rc_changed else 'no'}")
         print("settings.systemPrompt: left intact (use restore from backup if you need rollback)")
 
     if preview_only:
@@ -651,13 +746,16 @@ def command_uninstall(args) -> int:
                 print(f"[备份] {path.name} → {backup.name}")
                 path.unlink()
                 print(f"[移除] {path}")
-        if zshrc_changed:
-            if rt["zshrc"].exists():
-                backup = backup_file(rt["zshrc"], timestamp, suffix="pre_uninstall")
-                print(f"[备份] {rt['zshrc'].name} → {backup.name}")
-            atomic_write_text(rt["zshrc"], zshrc_updated)
-            print(f"[写入] {rt['zshrc']}")
-            print("[提示] 新开 shell 或 source ~/.zshrc 使 wrapper 卸载生效")
+        if shell_rc_changed:
+            if rt["shell_rc"].exists():
+                backup = backup_file(rt["shell_rc"], timestamp, suffix="pre_uninstall")
+                print(f"[备份] {rt['shell_rc'].name} → {backup.name}")
+            atomic_write_text(rt["shell_rc"], shell_rc_updated)
+            print(f"[写入] {rt['shell_rc']}")
+            if rt["shell_kind"] == "powershell":
+                print("[提示] 新开 PowerShell 或 . $PROFILE 使 wrapper 卸载生效")
+            else:
+                print("[提示] 新开 shell 或 source ~/.zshrc 使 wrapper 卸载生效")
 
     print("[完成] uninstall 已完成。")
     return 0
@@ -706,7 +804,8 @@ def command_runtime_doctor(args) -> int:
             "append_prompt_file": str(rt["append_prompt"]),
             "append_prompt_exists": rt["append_prompt"].is_file(),
             "settings_file": str(rt["settings"]),
-            "shell_rc": str(rt["zshrc"]),
+            "shell_kind": rt["shell_kind"],
+            "shell_rc": str(rt["shell_rc"]),
         }
         if rt["system_prompt"].is_file():
             status["system_prompt_bytes"] = rt["system_prompt"].stat().st_size
@@ -719,9 +818,9 @@ def command_runtime_doctor(args) -> int:
         status["settings_model"] = settings.get("model")
         status["anthropic_model"] = (settings.get("env") or {}).get("ANTHROPIC_MODEL") if isinstance(settings.get("env"), dict) else None
         status["base_url"] = (settings.get("env") or {}).get("ANTHROPIC_BASE_URL") if isinstance(settings.get("env"), dict) else None
-        zshrc = read_text_if_exists(rt["zshrc"])
-        status["shell_wrapper_managed"] = bool(shell_block_pattern().search(zshrc))
-        status["shell_wrapper_legacy"] = bool(LEGACY_WRAPPER_RE.search(zshrc))
+        shell_rc_content = read_text_if_exists(rt["shell_rc"])
+        status["shell_wrapper_managed"] = bool(shell_block_pattern().search(shell_rc_content))
+        status["shell_wrapper_legacy"] = bool(LEGACY_WRAPPER_RE.search(shell_rc_content))
         status["effective_command"] = (
             f'"{rt["claude_bin"]}" --system-prompt-file "{rt["system_prompt"]}" '
             f'--append-system-prompt-file "{rt["append_prompt"]}"'
@@ -742,6 +841,7 @@ def command_runtime_doctor(args) -> int:
         print(json.dumps(status, ensure_ascii=False, indent=2))
         return 0
 
+    print(f"shell kind: {status.get('shell_kind', 'N/A')}")
     print(f"claude bin: {status['claude_bin']} ({'yes' if status['claude_bin_exists'] else 'missing'})")
     print(f"system-prompt: {status['system_prompt_file']} ({'yes' if status['system_prompt_exists'] else 'no'})")
     print(f"append-prompt: {status['append_prompt_file']} ({'yes' if status['append_prompt_exists'] else 'no'})")

@@ -38,7 +38,7 @@ python3 claude-instruct.py status \
 
 ### user-scope runtime
 
-`--runtime` 会影响通过 managed `claude()` shell wrapper 启动的后续 user-scope Claude Code 会话。先预览：
+`--runtime` 会影响通过 managed shell wrapper 启动的后续 user-scope Claude Code 会话。先预览：
 
 ```bash
 python3 claude-instruct.py install --scope user --runtime
@@ -53,6 +53,15 @@ python3 claude-instruct.py status --scope user --runtime --json
 python3 claude-instruct.py doctor --json
 ```
 
+Windows PowerShell 使用：
+
+```powershell
+python .\claude-instruct.py install --scope user --runtime --yes
+. $PROFILE
+python .\claude-instruct.py status --scope user --runtime --json
+python .\claude-instruct.py doctor --json
+```
+
 ## 核验清单
 
 安装智能体在写入前应说明：
@@ -61,7 +70,7 @@ python3 claude-instruct.py doctor --json
 2. 指令文件名与实际路径；
 3. 将插入或替换的 managed import block；
 4. 现有文件的 timestamp 备份；
-5. 仅在 `--runtime` 下：`settings.systemPrompt`、可选 `max_tokens` 与 `~/.zshrc` wrapper 的变更；
+5. 仅在 `--runtime` 下：`settings.systemPrompt`、可选 `max_tokens` 与 shell profile wrapper 的变更；
 6. 不会修改的内容：二进制、MCP、网络、凭证、Base URL、运行中进程和其他现有 settings 字段。
 
 完整文件所有权、撤销与恢复语义见 [运行时参考](reference.md)。

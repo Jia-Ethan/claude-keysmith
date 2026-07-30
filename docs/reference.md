@@ -29,9 +29,20 @@
 | `~/.claude/keysmith/system-prompt.md` | keysmith 管理；写入前备份，写入 source prompt 去掉首个 Markdown H1 后的正文 |
 | `~/.claude/keysmith/append-prompt.md` | keysmith 管理；写入前备份，内容来自 `--append-file` 或内置示例 |
 | `~/.claude/settings.json` | 只对齐顶层 `systemPrompt`；仅在显式使用 `--max-tokens N` 时写入顶层 `max_tokens`；保留其他 JSON 字段 |
-| `~/.zshrc` | 只管理 `# >>> claude-keysmith runtime >>>` 与结束标记之间的 wrapper；写入前备份 |
+| `~/.zshrc`（macOS / Linux）或 PowerShell profile（Windows） | 只管理 `# >>> claude-keysmith runtime >>>` 与结束标记之间的 wrapper；写入前备份 |
 
-生成的 shell wrapper 等价于：
+在 macOS / Linux 上，wrapper 是 `claude()` shell 函数；在 Windows PowerShell 上，wrapper 是 profile 中的 `function global:claude`。Windows 默认根据 `PSModulePath` 在 `Documents/WindowsPowerShell` 与 `Documents/PowerShell` 之间选择 profile，并检测 npm 全局安装的 `claude.cmd`。
+
+可选环境变量覆盖：
+
+| 变量 | 用途 |
+|---|---|
+| `CLAUDE_KEYSMITH_HOME` | 覆盖 home 目录解析 |
+| `CLAUDE_KEYSMITH_SHELL` | 强制 `zsh` 或 `powershell` |
+| `CLAUDE_KEYSMITH_SHELL_RC` | 强制 shell profile 路径 |
+| `CLAUDE_KEYSMITH_CLAUDE_BIN` | 强制 Claude CLI 路径 |
+
+生成的 macOS / Linux shell wrapper 等价于：
 
 ```zsh
 claude() {
@@ -42,7 +53,7 @@ claude() {
 }
 ```
 
-路径在真实 wrapper 中会被解析为绝对路径。启用后新 shell 需要 `source ~/.zshrc` 或重新打开终端。
+路径在真实 wrapper 中会被解析为绝对路径。启用后新 shell 需要 `source ~/.zshrc` 或重新打开终端。Windows PowerShell 需要 `. $PROFILE` 或重新打开 PowerShell。
 
 ## settings 字段
 
@@ -95,6 +106,6 @@ python3 claude-instruct.py doctor --json
 ## 限制
 
 - 只支持 `user` scope 的 runtime；project/local scope 仅支持 import-block 层。
-- runtime wrapper 的当前实现写入 `~/.zshrc`，适用于 zsh。
+- runtime wrapper 支持 macOS / Linux 的 zsh 与 Windows 的 PowerShell。
 - 工具不验证 Claude Code 是否在某个既有会话中重新读取指令。启动新会话并按实际任务 smoke test。
 - 备份不会自动删除；在确认无需回滚后再手动清理。

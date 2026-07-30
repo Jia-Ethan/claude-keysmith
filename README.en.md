@@ -23,7 +23,7 @@
 
 `claude-keysmith` deploys a Markdown instruction file into a keysmith-managed directory and anchors it in `CLAUDE.md` or `CLAUDE.local.md` with a recognizable, uninstallable import block.
 
-The optional `--runtime` mode also aligns `settings.json` `systemPrompt` and installs a managed `claude()` wrapper in `~/.zshrc`. The wrapper supplies `--system-prompt-file` and `--append-system-prompt-file` on each shell invocation.
+The optional `--runtime` mode also aligns `settings.json` `systemPrompt` and installs a managed shell wrapper. On macOS / Linux it writes a `claude()` function to `~/.zshrc`; on Windows PowerShell it writes `function global:claude` to the PowerShell profile. The wrapper supplies `--system-prompt-file` and `--append-system-prompt-file` on each shell invocation.
 
 Commands preview by default. They write only with explicit `--yes`, back up existing files before changes, and remove only keysmith-owned blocks and files on uninstall.
 
@@ -62,6 +62,17 @@ source ~/.zshrc
 python3 claude-instruct.py doctor --json
 ```
 
+Windows PowerShell:
+
+```powershell
+python .\claude-instruct.py install --scope user --runtime       # preview
+python .\claude-instruct.py install --scope user --runtime --yes
+. $PROFILE
+python .\claude-instruct.py doctor --json
+```
+
+On Windows, optional environment overrides are available: `CLAUDE_KEYSMITH_HOME`, `CLAUDE_KEYSMITH_SHELL`, `CLAUDE_KEYSMITH_SHELL_RC`, and `CLAUDE_KEYSMITH_CLAUDE_BIN`.
+
 Do not execute `curl | python`. Download or clone, inspect the script and examples, then run it locally.
 
 ## Files it changes
@@ -72,7 +83,7 @@ Do not execute `curl | python`. Download or clone, inspect the script and exampl
 | Adjacent `keysmith/<name>.md` or `.claude/keysmith/<name>.md` | Creates, or backs up then replaces, the instruction file |
 | `~/.claude/keysmith/system-prompt.md`, `append-prompt.md` | `--runtime` only: creates or backs up then replaces |
 | `~/.claude/settings.json` | `--runtime` only: aligns top-level `systemPrompt`; changes `max_tokens` only when `--max-tokens` is supplied; preserves other fields |
-| `~/.zshrc` | `--runtime` only: inserts or replaces one bounded managed `claude()` wrapper; backs up an existing file first |
+| `~/.zshrc` (macOS / Linux) or PowerShell profile (Windows) | `--runtime` only: inserts or replaces one bounded managed wrapper; backs up an existing file first |
 
 See [`docs/reference.md`](docs/reference.md) for ownership, settings, and restore details.
 
@@ -104,12 +115,13 @@ python3 claude-instruct.py restore \
 | --- | --- |
 | Unsure what would change | Run the same `install` or `uninstall` command without `--yes` and inspect dry-run output |
 | Block or instruction-file state is wrong | Run `status --scope … --json` and check target path, block, and instruction file |
-| Runtime appears inactive | Run `source ~/.zshrc`, then `doctor --json`; inspect prompt files, settings alignment, and managed wrapper |
+| Runtime appears inactive | Run `source ~/.zshrc` on macOS / Linux or `. $PROFILE` on Windows, then `doctor --json`; inspect prompt files, settings alignment, and managed wrapper |
 | Need rollback | Use `restore` with the matching timestamped backup; it first backs up the current target |
 
 ## Compatibility and limits
 
-- Python 3.8+ is recommended. The current runtime wrapper targets zsh and `~/.zshrc`.
+- Python 3.8+ is recommended. The runtime wrapper supports zsh on macOS / Linux and PowerShell on Windows.
+- On Windows, the installer detects the PowerShell profile and npm-global `claude.cmd`; `CLAUDE_KEYSMITH_*` environment variables can override auto-detection.
 - Only keysmith-owned HTML comment blocks are managed; other memory content is preserved.
 - It does not manage Claude Code binaries, running processes, network settings, MCP, credentials, Base URL, hooks, or permissions.
 - It does not verify that an existing session reloads instructions; start a new session and smoke-test the real workflow.
