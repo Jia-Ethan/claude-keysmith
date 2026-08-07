@@ -362,7 +362,12 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
     bin_dir.mkdir(parents=True)
     (bin_dir / "claude").write_text("#!/bin/sh\n", encoding="utf-8")
 
-    result = run_cli(["install", "--scope", "user", "--runtime", "--yes"], home=home)
+    shell_env = {"CLAUDE_KEYSMITH_SHELL": "zsh"}
+    result = run_cli(
+        ["install", "--scope", "user", "--runtime", "--yes"],
+        home=home,
+        extra_env=shell_env,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "[完成]" in result.stdout
 
@@ -383,7 +388,11 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
     assert str(system_prompt) in zshrc
     assert str(append_prompt) in zshrc
 
-    status = run_cli(["status", "--scope", "user", "--runtime", "--json"], home=home)
+    status = run_cli(
+        ["status", "--scope", "user", "--runtime", "--json"],
+        home=home,
+        extra_env=shell_env,
+    )
     assert '"runtime_ready": true' in status.stdout or '"runtime_ready": true' in status.stdout.replace("True", "true")
 
 
@@ -678,9 +687,8 @@ def test_windows_upstream_excludes_keysmith_launcher_that_wins_path(tmp_path, mo
         "# claude-keysmith\n$systemPrompt = '~/.claude/keysmith/system-prompt.md'\n",
         encoding="utf-8",
     )
-    legacy_cmd.write_text(
-        '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n',
-        encoding="utf-8",
+    legacy_cmd.write_bytes(
+        b'@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
     )
     npm_root = home / "AppData" / "Roaming" / "npm"
     package_exe = npm_root / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
@@ -787,9 +795,8 @@ def test_runtime_install_migrates_recognized_local_bin_launchers(tmp_path):
         "# claude-keysmith legacy wrapper\n",
         encoding="utf-8",
     )
-    legacy_cmd.write_text(
-        '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0claude.ps1" %*\r\n',
-        encoding="utf-8",
+    legacy_cmd.write_bytes(
+        b'@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0claude.ps1" %*\r\n'
     )
     env = windows_runtime_env(
         home,
@@ -817,9 +824,8 @@ def test_legacy_launcher_migration_never_overwrites_preoccupied_backup(tmp_path)
         "# claude-keysmith\n$systemPrompt = 'system-prompt'\n",
         encoding="utf-8",
     )
-    legacy_cmd.write_text(
-        '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n',
-        encoding="utf-8",
+    legacy_cmd.write_bytes(
+        b'@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
     )
     timestamp = "20260807_120000"
     occupied = local_bin / f"claude.ps1.bak_{timestamp}_pre_v6"
@@ -847,7 +853,7 @@ def test_legacy_launcher_migration_rolls_back_first_file_when_second_move_fails(
     ps1_content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
     cmd_content = '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
     legacy_ps1.write_text(ps1_content, encoding="utf-8")
-    legacy_cmd.write_text(cmd_content, encoding="utf-8")
+    legacy_cmd.write_bytes(cmd_content.encode("utf-8"))
     real_replace = claude_instruct.os.replace
 
     def fail_cmd_migration(source, target):
@@ -903,7 +909,7 @@ def test_runtime_install_rejects_legacy_cmd_with_extra_command_before_any_write(
     ps1_content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
     cmd_content = '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %* & echo unexpected\r\n'
     legacy_ps1.write_text(ps1_content, encoding="utf-8")
-    legacy_cmd.write_text(cmd_content, encoding="utf-8")
+    legacy_cmd.write_bytes(cmd_content.encode("utf-8"))
     env = windows_runtime_env(home, profile, CLAUDE_KEYSMITH_CLAUDE_BIN=upstream)
 
     result = run_cli(["install", "--scope", "user", "--runtime", "--yes"], home=home, extra_env=env, check=False)
@@ -929,7 +935,7 @@ def test_runtime_install_keeps_legacy_launchers_when_later_profile_write_fails(t
     ps1_content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
     cmd_content = '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
     legacy_ps1.write_text(ps1_content, encoding="utf-8")
-    legacy_cmd.write_text(cmd_content, encoding="utf-8")
+    legacy_cmd.write_bytes(cmd_content.encode("utf-8"))
     monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
     for key, value in windows_runtime_env(
         home,
