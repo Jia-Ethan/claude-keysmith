@@ -1,6 +1,13 @@
 # Changelog
 
-## v6 (Unreleased)
+## Unreleased
+
+### Windows wrapper retry safety
+
+- PowerShell wrapper 只在调用运算符无法解析尚未启动的候选入口时继续选择其他候选。
+- 已启动 `.ps1` 脚本内部抛出的 `CommandNotFoundException` 或 `ItemNotFoundException` 会立即返回给调用方，不再进入等待循环或重复执行命令。
+
+## v6 (2026-08-07)
 
 ### Windows updater resilience
 
@@ -25,8 +32,8 @@
 **状态、诊断与文件安全：**
 
 - 新增 `--version`，输出 `claude-keysmith v6`。
-- runtime status 新增 `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_paths`、`upgrade_required`，同时保留已有字段。
-- `runtime_ready` 现在要求 prompt 文件完整、settings 对齐、wrapper 为 v6 当前模板、至少一个上游入口存在，并且没有未迁移的旧 launcher。
+- runtime status 新增 `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_paths`、`legacy_launcher_conflict`、`legacy_launcher_conflict_paths`、`upgrade_required`，同时保留已有字段。
+- `runtime_ready` 现在要求 prompt 文件完整、settings 对齐、wrapper 为 v6 当前模板、至少一个上游入口存在，并且没有未迁移或冲突的旧 launcher。
 - `doctor` 不再输出 Base URL 或潜在凭证，只报告安装类型、路径、候选拒绝原因与修复动作。
 - 同一秒内的备份使用唯一文件名，不覆盖既有恢复点；原子写入失败时清理临时文件。
 
@@ -42,12 +49,12 @@ python .\claude-instruct.py doctor --json
 
 安装 Agent 不得自行创建或替换 `~/.local/bin/claude.ps1`、`~/.local/bin/claude.cmd`；Claude Code 二进制及其 launcher 由上游安装器管理。
 
-**发布前门禁：**
+**验证与发布边界：**
 
-- 最终整合 diff 已完成本地 `py_compile`、Python 3.9/3.14 全量 pytest 与文档一致性检查。
-- GitHub Actions 已配置 Ubuntu、macOS、Windows 及 Python 3.8/3.14 矩阵，发布前仍须等待实际运行通过。
-- Windows runner 已配置分别使用 Windows PowerShell 5.1 与 PowerShell 7 加载并执行生成的 wrapper；真实 Ctrl+C 另列人工门禁。
-- 在事故机或等价 Windows 环境真实复测 `claude update`，并保留旧 launcher 迁移与回滚证据。
+- 本地 `py_compile`、Python 3.9/3.14 全量 pytest 与文档一致性检查通过。
+- GitHub Actions 的 Ubuntu、macOS、Windows × Python 3.8/3.14 矩阵，以及 Windows PowerShell 5.1 / PowerShell 7 wrapper 实际加载与执行均通过。
+- 事故机真实 `claude update` 与人工真实 Ctrl+C 保留为发布后补验边界；子进程返回 130 不等同于真实 Ctrl+C。
+- 已发布的 `v6` tag 对 `.ps1` 上游内部抛出的两类路径异常存在误重试风险；`Unreleased` 已修复，尚待后续版本发布。
 
 ## v5 (2026-07-29)
 

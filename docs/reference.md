@@ -67,7 +67,7 @@ PowerShell wrapper 不把安装时发现的 npm shim 固化为唯一依赖。每
 4. npm 包目录中的 `bin/claude.exe`，包括默认和自定义 npm prefix；
 5. npm `claude.cmd` / `claude.ps1` / `claude.exe` shim 兜底。
 
-`CLAUDE_KEYSMITH_CLAUDE_BIN` 是 strict override：一旦设置，路径无效时也不回退。npm prefix 来自 `NPM_CONFIG_PREFIX`、`APPDATA/npm` 和 PATH 中可识别的 npm 布局。`~/.local/bin/claude.ps1/.cmd` 会以 `eligible: false` 记录并排除，避免递归。若全部候选在 Claude Code 自更新期间暂时消失，wrapper 每 250 ms 重新检测一次，最多等待 10 秒。找到入口后只启动一次；启动后没有自动重试路径，因此非零退出或中断不会触发第二次执行。真实 Ctrl+C 行为仍需在发布前人工验证，不能用退出码 130 模拟替代。
+`CLAUDE_KEYSMITH_CLAUDE_BIN` 是 strict override：一旦设置，路径无效时也不回退。npm prefix 来自 `NPM_CONFIG_PREFIX`、`APPDATA/npm` 和 PATH 中可识别的 npm 布局。`~/.local/bin/claude.ps1/.cmd` 会以 `eligible: false` 记录并排除，避免递归。若全部候选在 Claude Code 自更新期间暂时消失，wrapper 每 250 ms 重新检测一次，最多等待 10 秒。找到入口后只启动一次；启动后没有自动重试路径，因此非零退出或中断不会触发第二次执行。真实 Ctrl+C 行为仍需人工补验，不能用退出码 130 模拟替代。
 
 wrapper 始终传入 `--system-prompt-file`、`--append-system-prompt-file` 和原始 `@args`，并保留上游退出码。入口在等待窗口结束后仍不可用时，它抛出 terminating error；不会使用 `exit` 关闭当前 PowerShell 会话。
 
@@ -142,9 +142,11 @@ runtime status 保留已有字段，并增加：
 | `shell_wrapper_current` | profile 中的 managed wrapper 是否匹配 v6 当前模板 |
 | `legacy_launcher_detected` | 是否发现尚未迁移的旧 Windows launcher |
 | `legacy_launcher_paths` | 发现的旧 launcher 路径列表 |
+| `legacy_launcher_conflict` | 是否发现所有权无法确认的同名 Windows launcher |
+| `legacy_launcher_conflict_paths` | 发生所有权冲突的 launcher 路径列表 |
 | `upgrade_required` | 当前 runtime 是否需要重新安装或迁移 |
 
-`runtime_ready` 只有在 system/append prompt 文件完整、settings 对齐、managed wrapper 匹配 v6 当前模板、至少一个上游入口存在，并且没有未迁移的旧 launcher 时才为 `true`。它不表示某个特定 CLI 会话、模型提供方或 API 网关一定会以预期方式处理请求。
+`runtime_ready` 只有在 system/append prompt 文件完整、settings 对齐、managed wrapper 匹配 v6 当前模板、至少一个上游入口存在，并且没有未迁移或冲突的旧 launcher 时才为 `true`。它不表示某个特定 CLI 会话、模型提供方或 API 网关一定会以预期方式处理请求。
 
 `doctor` 仅报告安装类型、相关路径、上游候选拒绝原因和建议的修复动作。它不会在文本、stderr 或 JSON 中回显 Base URL、token、cookie 等潜在凭证。
 

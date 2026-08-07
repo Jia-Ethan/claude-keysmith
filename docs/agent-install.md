@@ -79,8 +79,8 @@ python .\claude-instruct.py doctor --json
 6. Windows runtime：PowerShell 5.1/7 profile、动态上游候选、旧 launcher 检测结果，以及需要设置的 `CLAUDE_KEYSMITH_SHELL_RC`；
 7. 不会修改的内容：二进制、MCP、网络、凭证、Base URL、运行中进程和其他现有 settings 字段。
 
-Windows runtime 写入后，`status --json` 应核对 `upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`upgrade_required` 与 `runtime_ready`。`doctor` 只能展示安装类型、路径、候选拒绝原因与修复动作；输出中不得出现 Base URL、token 或 cookie。
+Windows runtime 写入后，`status --json` 应核对 `upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_conflict`、`upgrade_required` 与 `runtime_ready`。`doctor` 只能展示安装类型、路径、候选拒绝原因与修复动作；输出中不得出现 Base URL、token 或 cookie。
 
-验收需要在新 PowerShell 会话中验证正常启动、参数透传与非零退出码；真实 Ctrl+C 中断必须单独人工验证，不能用子进程返回 130 代替。发布 v6 前还需要分别在 Windows PowerShell 5.1、PowerShell 7，以及事故机或等价环境真实复测 `claude update`。不要把静态 status、dry-run 或尚未运行的 Actions 当作业务验收。
+验收需要在新 PowerShell 会话中验证正常启动、参数透传与非零退出码；真实 Ctrl+C 中断必须单独人工验证，不能用子进程返回 130 代替。v6 的 Windows PowerShell 5.1、PowerShell 7 wrapper 与跨平台 Actions 已通过；事故机或等价环境的真实 `claude update` 和人工 Ctrl+C 仍属于发布后补验。不要把静态 status 或 dry-run 当作真实运行验收。
 
 完整文件所有权、撤销与恢复语义见 [运行时参考](reference.md)。

@@ -132,7 +132,7 @@ python .\claude-instruct.py install --scope user --runtime --yes
 python .\claude-instruct.py status --scope user --runtime --json
 ```
 
-`status --runtime --json` preserves existing fields and adds `upstream_candidates`, `upstream_path`, `upstream_exists`, `shell_wrapper_current`, `legacy_launcher_detected`, `legacy_launcher_paths`, and `upgrade_required`. `runtime_ready` is `true` only when both prompts are complete, settings are aligned, the wrapper matches the current v6 template, an upstream entry point exists, and no unmigrated legacy launcher remains.
+`status --runtime --json` preserves existing fields and adds `upstream_candidates`, `upstream_path`, `upstream_exists`, `shell_wrapper_current`, `legacy_launcher_detected`, `legacy_launcher_paths`, `legacy_launcher_conflict`, `legacy_launcher_conflict_paths`, and `upgrade_required`. `runtime_ready` is `true` only when both prompts are complete, settings are aligned, the wrapper matches the current v6 template, an upstream entry point exists, and no unmigrated or conflicting legacy launcher remains.
 
 ## Compatibility and limits
 

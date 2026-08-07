@@ -1469,3 +1469,109 @@ def test_powershell_wrapper_reselects_after_candidate_vanishes_before_start(tmp_
     assert result.returncode == 0, result.stdout + result.stderr
     forwarded = json.loads(fallback_log.read_text(encoding="utf-8"))
     assert forwarded[-1] == "forwarded value"
+
+
+@pytest.mark.parametrize(
+    "powershell",
+    [
+        executable
+        for executable in (
+            claude_instruct.shutil.which("pwsh"),
+            claude_instruct.shutil.which("powershell.exe"),
+        )
+        if executable
+    ],
+    ids=lambda executable: Path(executable).name,
+)
+@pytest.mark.parametrize(
+    ("failure_line", "exception_name"),
+    [
+        ("keysmith-command-that-does-not-exist", "CommandNotFoundException"),
+        (
+            "Get-Item -LiteralPath (Join-Path $PSScriptRoot 'missing-internal-item')",
+            "ItemNotFoundException",
+        ),
+        (
+            "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n"
+            "& $MyInvocation.MyCommand.Path",
+            "CommandNotFoundException",
+        ),
+    ],
+)
+def test_powershell_wrapper_does_not_retry_errors_from_started_script(
+    tmp_path, monkeypatch, powershell, failure_line, exception_name
+):
+    profile = tmp_path / "profile.ps1"
+    upstream = tmp_path / "upstream.ps1"
+    fallback = tmp_path / "fallback.ps1"
+    system_prompt = tmp_path / "prompts" / "system-prompt.md"
+    append_prompt = tmp_path / "prompts" / "append-prompt.md"
+    invocation_count = tmp_path / "invocation-count.txt"
+    fallback_marker = tmp_path / "fallback-ran.txt"
+    system_prompt.parent.mkdir(parents=True)
+    system_prompt.write_text("system\n", encoding="utf-8")
+    append_prompt.write_text("append\n", encoding="utf-8")
+    upstream.write_text(
+        "$count = 0\n"
+        "if (Test-Path -LiteralPath $env:KEYSMITH_INVOCATION_COUNT) {\n"
+        "  $count = [int](Get-Content -LiteralPath $env:KEYSMITH_INVOCATION_COUNT -Raw)\n"
+        "}\n"
+        "Set-Content -LiteralPath $env:KEYSMITH_INVOCATION_COUNT -Value ($count + 1)\n"
+        f"{failure_line}\n",
+        encoding="utf-8",
+    )
+    fallback.write_text(
+        "Set-Content -LiteralPath $env:KEYSMITH_FALLBACK_MARKER -Value 'ran'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_SECONDS", 0.2)
+    monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_MILLISECONDS", 25)
+    profile.write_text(
+        claude_instruct.render_shell_wrapper(
+            upstream,
+            system_prompt,
+            append_prompt,
+            "powershell",
+            [
+                {
+                    "kind": "script",
+                    "path": str(upstream),
+                    "exists": True,
+                    "eligible": True,
+                    "reason": "fixture",
+                },
+                {
+                    "kind": "fallback",
+                    "path": str(fallback),
+                    "exists": True,
+                    "eligible": True,
+                    "reason": "must not run",
+                },
+            ],
+        ),
+        encoding="utf-8",
+    )
+    command = "\n".join(
+        [
+            f". {claude_instruct._powershell_quote(profile)}",
+            "$caughtType = $null",
+            "try { claude } catch { $caughtType = $_.Exception.GetType().Name }",
+            f"if ($caughtType -ne '{exception_name}') {{ throw \"unexpected error: $caughtType\" }}",
+        ]
+    )
+    env = os.environ.copy()
+    env["KEYSMITH_INVOCATION_COUNT"] = str(invocation_count)
+    env["KEYSMITH_FALLBACK_MARKER"] = str(fallback_marker)
+
+    result = subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-Command", command],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert invocation_count.read_text(encoding="utf-8").strip() == "1"
+    assert not fallback_marker.exists()

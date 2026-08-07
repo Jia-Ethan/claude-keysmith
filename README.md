@@ -135,7 +135,7 @@ python .\claude-instruct.py install --scope user --runtime --yes
 python .\claude-instruct.py status --scope user --runtime --json
 ```
 
-`status --runtime --json` 保留已有字段，并提供 `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_paths` 与 `upgrade_required`。`runtime_ready` 只有在 prompt 完整、settings 对齐、wrapper 为当前 v6 模板、存在可用上游入口且没有未迁移旧 launcher 时才为 `true`。
+`status --runtime --json` 保留已有字段，并提供 `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_paths`、`legacy_launcher_conflict`、`legacy_launcher_conflict_paths` 与 `upgrade_required`。`runtime_ready` 只有在 prompt 完整、settings 对齐、wrapper 为当前 v6 模板、存在可用上游入口，且没有未迁移或冲突的旧 launcher 时才为 `true`。
 
 ### 兼容性与限制
 

@@ -740,9 +740,11 @@ def render_shell_wrapper(
                 "          @args",
                 "        $claudeKeysmithExitCode = $LASTEXITCODE",
                 "      } catch [System.Management.Automation.CommandNotFoundException] {",
-                "        continue",
+                "        if ($_.InvocationInfo.InvocationName -eq '&' -and $_.CategoryInfo.TargetName -eq $candidate -and $_.InvocationInfo.ScriptName -eq $PSCommandPath) { continue }",
+                "        throw",
                 "      } catch [System.Management.Automation.ItemNotFoundException] {",
-                "        continue",
+                "        if ($_.InvocationInfo.InvocationName -eq '&' -and $_.CategoryInfo.TargetName -eq $candidate -and $_.InvocationInfo.ScriptName -eq $PSCommandPath) { continue }",
+                "        throw",
                 "      }",
                 "      if ($null -eq $claudeKeysmithExitCode) { $claudeKeysmithExitCode = 0 }",
                 "      $global:LASTEXITCODE = $claudeKeysmithExitCode",
@@ -1387,7 +1389,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--yes", action="store_true", help="确认写入；未提供时只预览")
     restore.set_defaults(func=command_restore)
 
-    doctor = subparsers.add_parser("doctor", help="检查当前机器上真正生效的 Claude Code 破限路径")
+    doctor = subparsers.add_parser("doctor", help="检查 Claude Code runtime 路径、wrapper 与修复建议")
     doctor.add_argument("--json", action="store_true", help="输出稳定 JSON")
     doctor.set_defaults(func=command_runtime_doctor)
 
