@@ -97,6 +97,18 @@ def marker_name(md_filename: str) -> str:
     return md_filename[:-3] if md_filename.endswith(".md") else md_filename
 
 
+def configure_utf8_stdio() -> None:
+    """Keep CLI diagnostics writable when Windows inherits a legacy code page."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Write UTF-8 text atomically inside the target directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -791,7 +803,8 @@ def ensure_shell_wrapper(content: str, block: str) -> Tuple[str, bool]:
     if match:
         if match.group(0) == block:
             return updated, changed
-        return pattern.sub(block, updated, count=1), True
+        # A Windows path such as C:\Users must not be parsed as a regex replacement.
+        return pattern.sub(lambda _match: block, updated, count=1), True
 
     prefix = updated
     if prefix and not prefix.endswith("\n"):
@@ -1382,6 +1395,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    configure_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args()
     return args.func(args)

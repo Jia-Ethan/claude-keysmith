@@ -36,6 +36,7 @@ def run_cli(args, *, home, cwd=None, check=True, extra_env=None):
         cwd=str(cwd) if cwd else None,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=check,
     )
@@ -314,6 +315,40 @@ def test_shell_wrapper_roundtrip_and_legacy_cleanup(tmp_path):
     removed, removed_changed = claude_instruct.remove_shell_wrapper(updated)
     assert removed_changed is True
     assert claude_instruct.SHELL_BEGIN not in removed
+
+
+def test_shell_wrapper_replacement_treats_windows_paths_as_literal_text():
+    old = claude_instruct.render_shell_wrapper(
+        Path(r"C:\old\claude.exe"),
+        Path(r"C:\old\system-prompt.md"),
+        Path(r"C:\old\append-prompt.md"),
+        "powershell",
+    )
+    new = claude_instruct.render_shell_wrapper(
+        Path(r"C:\Users\Example\claude.exe"),
+        Path(r"C:\Users\Example\system-prompt.md"),
+        Path(r"C:\Users\Example\append-prompt.md"),
+        "powershell",
+    )
+
+    updated, changed = claude_instruct.ensure_shell_wrapper(old, new)
+
+    assert changed is True
+    assert updated == new
+
+
+def test_cli_forces_utf8_output_when_inherited_encoding_is_legacy(tmp_path):
+    home = tmp_path / "home"
+
+    result = run_cli(
+        ["install", "--scope", "user", "--yes"],
+        home=home,
+        extra_env={"PYTHONIOENCODING": "cp1252"},
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[写入]" in result.stdout
 
 
 def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path):
