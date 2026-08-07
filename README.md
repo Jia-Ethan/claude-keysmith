@@ -74,7 +74,9 @@ python .\claude-instruct.py install --scope user --runtime --yes
 python .\claude-instruct.py doctor --json
 ```
 
-Windows 可用以下可选环境变量覆盖自动检测：`CLAUDE_KEYSMITH_HOME`、`CLAUDE_KEYSMITH_SHELL`、`CLAUDE_KEYSMITH_SHELL_RC`、`CLAUDE_KEYSMITH_CLAUDE_BIN`。
+v6 正式支持 Windows PowerShell 5.1 和 PowerShell 7。managed wrapper 每次调用都会动态选择可用的 Claude Code 上游入口，不再把 npm 临时 shim 固化为唯一依赖；入口在更新期间暂时消失时，会等待最多 10 秒再给出 terminating error，且不会关闭当前 PowerShell。
+
+Windows 可用以下可选环境变量覆盖自动检测：`CLAUDE_KEYSMITH_HOME`、`CLAUDE_KEYSMITH_SHELL`、`CLAUDE_KEYSMITH_SHELL_RC`、`CLAUDE_KEYSMITH_CLAUDE_BIN`。`CLAUDE_KEYSMITH_CLAUDE_BIN` 是严格入口覆盖；PowerShell profile 从实际用户级 `PSModulePath` 条目派生并支持重定向 Documents，即使其 `Modules` 目录尚未创建也会按路径结构识别；无法识别时必须用 `CLAUDE_KEYSMITH_SHELL_RC` 指定。
 
 不要用 `curl | python` 直接执行；先下载或 clone 仓库、检查脚本与示例，再运行。
 
@@ -87,6 +89,8 @@ Windows 可用以下可选环境变量覆盖自动检测：`CLAUDE_KEYSMITH_HOME
 | `~/.claude/keysmith/system-prompt.md`、`append-prompt.md` | 仅 `--runtime`：新建或备份后替换 |
 | `~/.claude/settings.json` | 仅 `--runtime`：对齐顶层 `systemPrompt`；使用 `--max-tokens` 时才更新该字段；其余字段保留 |
 | `~/.zshrc`（macOS / Linux）或 PowerShell profile（Windows） | 仅 `--runtime`：插入或替换一个带边界标记的 managed wrapper；已有文件先备份 |
+
+Windows 升级时，工具还会预检旧的 `~/.local/bin/claude.ps1` / `claude.cmd`。只有能够确认是旧 keysmith wrapper 与同目录纯转发器时，才会在 `--yes` 下重命名为唯一 timestamp 备份；未知同名文件会阻止写入，不会被覆盖。
 
 完整所有权、settings 更新与恢复语义见 [`docs/reference.md`](docs/reference.md)。
 
@@ -118,15 +122,28 @@ python3 claude-instruct.py restore \
 | --- | --- |
 | 不确定会改什么 | 不加 `--yes` 运行同一条 `install` / `uninstall`，检查 dry-run 输出 |
 | import block 或文件状态异常 | 运行 `status --scope … --json`，确认目标路径、block 与指令文件 |
-| runtime 看起来没有生效 | macOS / Linux 先 `source ~/.zshrc`，Windows 先 `. $PROFILE`；然后运行 `doctor --json`，确认 prompt 文件、settings 对齐与 managed wrapper |
+| Windows 更新后报 `required file is missing` | 使用 v6 重新运行 runtime install；先检查 dry-run 中的旧 launcher 迁移计划，再加 `--yes`，加载 profile 后运行 `status --json` 和 `doctor --json` |
+| runtime 看起来没有生效 | macOS / Linux 先 `source ~/.zshrc`，Windows 先 `. $PROFILE`；然后运行 `doctor --json`，确认 prompt、settings、wrapper、上游入口和旧 launcher 状态 |
 | 需要回滚 | 指定对应的 timestamp 备份运行 `restore`；恢复前工具会再为当前文件创建备份 |
+
+Windows v5 runtime 升级示例：
+
+```powershell
+python .\claude-instruct.py install --scope user --runtime       # 查看 profile 与旧 launcher 迁移
+python .\claude-instruct.py install --scope user --runtime --yes
+. $PROFILE
+python .\claude-instruct.py status --scope user --runtime --json
+```
+
+`status --runtime --json` 保留已有字段，并提供 `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_paths` 与 `upgrade_required`。`runtime_ready` 只有在 prompt 完整、settings 对齐、wrapper 为当前 v6 模板、存在可用上游入口且没有未迁移旧 launcher 时才为 `true`。
 
 ### 兼容性与限制
 
-- 推荐 Python 3.8+；runtime wrapper 支持 macOS / Linux 的 zsh 与 Windows 的 PowerShell。
-- Windows 默认检测 PowerShell profile 与 npm 全局安装的 `claude.cmd`；可用 `CLAUDE_KEYSMITH_*` 环境变量覆盖路径。
+- 推荐 Python 3.8+；runtime wrapper 支持 macOS / Linux 的 zsh，以及 Windows PowerShell 5.1 / PowerShell 7。CMD 和 Git Bash 不属于 v6 正式 wrapper 支持范围。
+- Windows 依次检测 strict override、native `~/.local/bin/claude.exe`、PATH 中非 npm prefix 的 WinGet/native exe、npm 包内 `bin/claude.exe` 与 npm shim 兜底；旧 `.local/bin/claude.ps1/.cmd` 以不可选候选记录并排除。
 - 只管理 `claude-keysmith` 自己插入的 HTML 注释 block，不覆盖用户其余 memory 内容。
 - 不管理 Claude Code 二进制、运行中进程、网络、MCP、token、cookie、Base URL、hooks 或 permissions。
+- 安装 Agent 不得自行创建或替换 `~/.local/bin/claude.ps1`、`~/.local/bin/claude.cmd`；这些 launcher 由 Claude Code 上游安装器管理。
 - 不验证某个既有会话是否重新加载指令；部署后启动新会话并做实际 smoke test。
 - 备份不会自动删除；确认无需回滚后再手动清理。
 

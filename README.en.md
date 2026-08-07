@@ -71,7 +71,9 @@ python .\claude-instruct.py install --scope user --runtime --yes
 python .\claude-instruct.py doctor --json
 ```
 
-On Windows, optional environment overrides are available: `CLAUDE_KEYSMITH_HOME`, `CLAUDE_KEYSMITH_SHELL`, `CLAUDE_KEYSMITH_SHELL_RC`, and `CLAUDE_KEYSMITH_CLAUDE_BIN`.
+v6 officially supports Windows PowerShell 5.1 and PowerShell 7. The managed wrapper resolves an available Claude Code upstream entry point on every invocation instead of pinning an npm transition shim as its only dependency. If all entry points disappear briefly during an update, it waits for up to 10 seconds before raising a terminating error without closing the current PowerShell session.
+
+Optional Windows overrides are `CLAUDE_KEYSMITH_HOME`, `CLAUDE_KEYSMITH_SHELL`, `CLAUDE_KEYSMITH_SHELL_RC`, and `CLAUDE_KEYSMITH_CLAUDE_BIN`. `CLAUDE_KEYSMITH_CLAUDE_BIN` is a strict upstream override. The PowerShell profile is derived from the first recognizable user-level `PSModulePath` entry, including redirected Documents locations and advertised `Modules` directories that do not exist yet; set `CLAUDE_KEYSMITH_SHELL_RC` when no entry can be recognized.
 
 Do not execute `curl | python`. Download or clone, inspect the script and examples, then run it locally.
 
@@ -84,6 +86,8 @@ Do not execute `curl | python`. Download or clone, inspect the script and exampl
 | `~/.claude/keysmith/system-prompt.md`, `append-prompt.md` | `--runtime` only: creates or backs up then replaces |
 | `~/.claude/settings.json` | `--runtime` only: aligns top-level `systemPrompt`; changes `max_tokens` only when `--max-tokens` is supplied; preserves other fields |
 | `~/.zshrc` (macOS / Linux) or PowerShell profile (Windows) | `--runtime` only: inserts or replaces one bounded managed wrapper; backs up an existing file first |
+
+During a Windows upgrade, the installer also preflights legacy `~/.local/bin/claude.ps1` and `claude.cmd` files. It renames them to unique timestamped backups under `--yes` only when the files are recognized as the old keysmith wrapper and its same-directory forwarding launcher. An unknown file blocks runtime writes and is never overwritten.
 
 See [`docs/reference.md`](docs/reference.md) for ownership, settings, and restore details.
 
@@ -115,15 +119,28 @@ python3 claude-instruct.py restore \
 | --- | --- |
 | Unsure what would change | Run the same `install` or `uninstall` command without `--yes` and inspect dry-run output |
 | Block or instruction-file state is wrong | Run `status --scope … --json` and check target path, block, and instruction file |
-| Runtime appears inactive | Run `source ~/.zshrc` on macOS / Linux or `. $PROFILE` on Windows, then `doctor --json`; inspect prompt files, settings alignment, and managed wrapper |
+| Windows reports `required file is missing` after an update | Re-run runtime install with v6; inspect the legacy-launcher migration in dry-run, then add `--yes`, reload the profile, and run `status --json` plus `doctor --json` |
+| Runtime appears inactive | Run `source ~/.zshrc` on macOS / Linux or `. $PROFILE` on Windows, then `doctor --json`; inspect prompts, settings, wrapper, upstream entry point, and legacy-launcher state |
 | Need rollback | Use `restore` with the matching timestamped backup; it first backs up the current target |
+
+Upgrade a Windows v5 runtime with:
+
+```powershell
+python .\claude-instruct.py install --scope user --runtime       # review profile and legacy-launcher migration
+python .\claude-instruct.py install --scope user --runtime --yes
+. $PROFILE
+python .\claude-instruct.py status --scope user --runtime --json
+```
+
+`status --runtime --json` preserves existing fields and adds `upstream_candidates`, `upstream_path`, `upstream_exists`, `shell_wrapper_current`, `legacy_launcher_detected`, `legacy_launcher_paths`, and `upgrade_required`. `runtime_ready` is `true` only when both prompts are complete, settings are aligned, the wrapper matches the current v6 template, an upstream entry point exists, and no unmigrated legacy launcher remains.
 
 ## Compatibility and limits
 
-- Python 3.8+ is recommended. The runtime wrapper supports zsh on macOS / Linux and PowerShell on Windows.
-- On Windows, the installer detects the PowerShell profile and npm-global `claude.cmd`; `CLAUDE_KEYSMITH_*` environment variables can override auto-detection.
+- Python 3.8+ is recommended. The runtime wrapper supports zsh on macOS / Linux and Windows PowerShell 5.1 / PowerShell 7. CMD and Git Bash are outside the v6 managed-wrapper support scope.
+- Windows checks a strict override, native `~/.local/bin/claude.exe`, non-npm-prefix WinGet/native executables on PATH, an npm package `bin/claude.exe`, and finally npm shim fallbacks; legacy `.local/bin/claude.ps1/.cmd` entries are recorded as ineligible and excluded.
 - Only keysmith-owned HTML comment blocks are managed; other memory content is preserved.
 - It does not manage Claude Code binaries, running processes, network settings, MCP, credentials, Base URL, hooks, or permissions.
+- Installation agents must not create or replace `~/.local/bin/claude.ps1` or `~/.local/bin/claude.cmd`; those launchers belong to the upstream Claude Code installer.
 - It does not verify that an existing session reloads instructions; start a new session and smoke-test the real workflow.
 - Backups are retained until you decide they are no longer needed.
 

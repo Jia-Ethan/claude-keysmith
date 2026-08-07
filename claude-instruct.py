@@ -38,9 +38,19 @@ START_TEMPLATE = "<!-- claude-keysmith:start name={name} -->"
 END_TEMPLATE = "<!-- claude-keysmith:end name={name} -->"
 DEFAULT_EXAMPLE = Path(__file__).resolve().parent / "examples" / "claude-project-rules.md"
 DEFAULT_APPEND_EXAMPLE = Path(__file__).resolve().parent / "examples" / "claude-append-prompt.md"
+VERSION = "v6"
 
 SHELL_BEGIN = "# >>> claude-keysmith runtime >>>"
 SHELL_END = "# <<< claude-keysmith runtime <<<"
+SHELL_VERSION_MARKER = f"# claude-keysmith wrapper version: {VERSION}"
+WINDOWS_UPSTREAM_RETRY_SECONDS = 10
+WINDOWS_UPSTREAM_RETRY_MILLISECONDS = 250
+LEGACY_CMD_FORWARD_RE = re.compile(
+    r"(?i)(?:@|call\s+)?(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)"
+    r"(?:\s+-(?:noprofile|nologo|noninteractive|sta|mta)"
+    r"|\s+-executionpolicy\s+(?:bypass|remotesigned|unrestricted|allsigned|restricted|default|undefined))*"
+    r"\s+-file\s+(?:\"%~dp0claude\.ps1\"|%~dp0claude\.ps1)\s+%\*"
+)
 LEGACY_WRAPPER_RE = re.compile(
     r"(?ms)^# Claude Code with persistent system prompt override\n"
     r"(?:# Claude Code with persistent system prompt override\n)?"
@@ -90,29 +100,90 @@ def marker_name(md_filename: str) -> str:
 def atomic_write_text(path: Path, content: str) -> None:
     """Write UTF-8 text atomically inside the target directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        delete=False,
-        newline="\n",
-    ) as tmp_file:
-        tmp_file.write(content)
+    tmp_path: Optional[Path] = None
+    try:
+        tmp_file = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            delete=False,
+            newline="\n",
+        )
         tmp_path = Path(tmp_file.name)
-    os.replace(str(tmp_path), str(path))
+        with tmp_file:
+            tmp_file.write(content)
+            flush = getattr(tmp_file, "flush", None)
+            if flush is not None:
+                flush()
+        os.replace(str(tmp_path), str(path))
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+
+def reserve_unique_backup_path(path: Path, timestamp: str, suffix: str = "") -> Path:
+    """Reserve a backup path so a later rename cannot overwrite another writer."""
+    extra = f"_{suffix}" if suffix else ""
+    base = path.with_name(f"{path.name}.bak_{timestamp}{extra}")
+    counter = 1
+    while True:
+        candidate = base if counter == 1 else base.with_name(f"{base.name}_{counter}")
+        counter += 1
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return candidate
 
 
 def backup_file(path: Path, timestamp: Optional[str] = None, suffix: str = "") -> Path:
-    """Create a timestamped backup next to an existing file."""
+    """Create a timestamped backup without racing another backup writer."""
     if not path.exists():
         raise FileNotFoundError(f"无法备份不存在的文件: {path}")
     if not path.is_file():
         raise FileNotFoundError(f"不是普通文件，拒绝备份: {path}")
     ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
     extra = f"_{suffix}" if suffix else ""
-    backup = path.with_name(f"{path.name}.bak_{ts}{extra}")
-    shutil.copy2(path, backup)
-    return backup
+    base = path.with_name(f"{path.name}.bak_{ts}{extra}")
+    counter = 1
+    while True:
+        backup = base if counter == 1 else base.with_name(f"{base.name}_{counter}")
+        counter += 1
+        try:
+            fd = os.open(
+                str(backup),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                path.stat().st_mode & 0o777 or 0o600,
+            )
+        except FileExistsError:
+            continue
+
+        open_fd: Optional[int] = fd
+        try:
+            destination_file = os.fdopen(fd, "wb")
+            open_fd = None
+            with destination_file as destination:
+                with path.open("rb") as source:
+                    shutil.copyfileobj(source, destination)
+                destination.flush()
+            shutil.copystat(path, backup)
+        except BaseException:
+            if open_fd is not None:
+                try:
+                    os.close(open_fd)
+                except OSError:
+                    pass
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+            raise
+        return backup
 
 
 def read_text_if_exists(path: Path) -> str:
@@ -226,8 +297,269 @@ def powershell_profile_path(home: Path) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     module_path = os.environ.get("PSModulePath", "")
-    profile_dir = "WindowsPowerShell" if "WindowsPowerShell" in module_path else "PowerShell"
-    return home / "Documents" / profile_dir / "Microsoft.PowerShell_profile.ps1"
+    if ";" in module_path:
+        entries = module_path.split(";")
+    elif os.pathsep == ":" and not re.match(r"^[A-Za-z]:[\\/]", module_path):
+        entries = module_path.split(os.pathsep)
+    else:
+        entries = [module_path]
+    for entry in (item.strip().strip('"') for item in entries):
+        if not entry:
+            continue
+        module_dir = Path(entry).expanduser()
+        # Fresh Windows installs can advertise the user module path before the
+        # directory has been created, so classify the path by structure.
+        if module_dir.name.lower() != "modules":
+            continue
+        shell_dir = module_dir.parent
+        if shell_dir.name.lower() not in {"windowspowershell", "powershell"}:
+            continue
+        lowered_parts = {part.lower() for part in module_dir.parts}
+        if lowered_parts.intersection({"program files", "program files (x86)", "system32"}):
+            continue
+        try:
+            module_dir.resolve().relative_to(home.expanduser().resolve())
+            user_level = True
+        except ValueError:
+            user_level = "documents" in lowered_parts
+        if not user_level:
+            continue
+        return shell_dir / "Microsoft.PowerShell_profile.ps1"
+    raise ValueError(
+        "无法从 PSModulePath 判断 PowerShell 5.1/7 profile；"
+        "请设置 CLAUDE_KEYSMITH_SHELL_RC 为目标 profile 的完整路径"
+    )
+
+
+def _env_case_insensitive(name: str) -> Optional[str]:
+    """Read an environment variable with Windows-compatible case matching."""
+    direct = os.environ.get(name)
+    if direct is not None:
+        return direct
+    lowered = name.lower()
+    for key, value in os.environ.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
+def _path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _candidate(kind: str, path: Path, reason: Optional[str] = None, eligible: bool = True) -> Dict[str, Any]:
+    try:
+        exists = path.is_file()
+    except OSError:
+        exists = False
+    if reason is None:
+        reason = "available" if exists else "missing"
+    return {
+        "kind": kind,
+        "path": str(path),
+        "exists": exists,
+        "eligible": eligible,
+        "reason": reason,
+    }
+
+
+def _windows_path_entries() -> List[Path]:
+    raw_path = _env_case_insensitive("PATH") or ""
+    separator = ";" if ";" in raw_path else os.pathsep
+    return [Path(item.strip().strip('"')) for item in raw_path.split(separator) if item.strip().strip('"')]
+
+
+def _npm_prefixes(home: Path) -> List[Path]:
+    prefixes: List[Path] = []
+    configured = (_env_case_insensitive("NPM_CONFIG_PREFIX") or "").strip()
+    if configured:
+        prefixes.append(Path(configured).expanduser())
+
+    appdata = (_env_case_insensitive("APPDATA") or "").strip()
+    prefixes.append(Path(appdata).expanduser() / "npm" if appdata else home / "AppData" / "Roaming" / "npm")
+
+    # A custom npm prefix is often visible only through its shim directory in PATH.
+    for entry in _windows_path_entries():
+        package_exe = entry / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
+        if package_exe.is_file() or any((entry / name).is_file() for name in ("claude.cmd", "claude.ps1")):
+            prefixes.append(entry)
+
+    unique: List[Path] = []
+    seen = set()
+    for prefix in prefixes:
+        key = _path_key(prefix)
+        if key not in seen:
+            seen.add(key)
+            unique.append(prefix)
+    return unique
+
+
+def inspect_legacy_launchers(home: Path) -> Dict[str, Any]:
+    """Classify old ~/.local/bin launchers without modifying unknown files."""
+    bin_dir = home / ".local" / "bin"
+    ps1 = bin_dir / "claude.ps1"
+    cmd = bin_dir / "claude.cmd"
+    existing = [path for path in (ps1, cmd) if path.exists()]
+    if not existing:
+        return {
+            "detected": False,
+            "paths": [],
+            "conflict": False,
+            "conflict_paths": [],
+        }
+
+    try:
+        ps1_text = ps1.read_text(encoding="utf-8") if ps1.is_file() else ""
+        cmd_text = cmd.read_text(encoding="utf-8") if cmd.is_file() else ""
+    except (OSError, UnicodeDecodeError):
+        return {
+            "detected": False,
+            "paths": [],
+            "conflict": True,
+            "conflict_paths": [str(path) for path in existing],
+        }
+
+    ps1_lower = ps1_text.lower()
+    ps1_known = bool(
+        ps1.is_file()
+        and "keysmith" in ps1_lower
+        and ("system-prompt" in ps1_lower or "append-prompt" in ps1_lower)
+    )
+
+    cmd_lines = [line.strip() for line in cmd_text.splitlines() if line.strip()]
+    if cmd_lines and cmd_lines[0].lower() == "@echo off":
+        cmd_lines = cmd_lines[1:]
+    forwarder = cmd_lines[0] if cmd_lines else ""
+    cmd_known = bool(
+        cmd.is_file()
+        and len(cmd_lines) in (1, 2)
+        and LEGACY_CMD_FORWARD_RE.fullmatch(forwarder)
+        and (
+            len(cmd_lines) == 1
+            or re.fullmatch(r"(?i)exit\s+/b\s+%errorlevel%", cmd_lines[1])
+        )
+    )
+
+    known_pair = ps1_known and cmd_known
+    return {
+        "detected": known_pair,
+        "paths": [str(ps1), str(cmd)] if known_pair else [],
+        "conflict": bool(existing and not known_pair),
+        "conflict_paths": [str(path) for path in existing] if not known_pair else [],
+    }
+
+
+def migrate_legacy_launchers(home: Path, timestamp: str) -> List[Tuple[Path, Path]]:
+    """Rename a recognized launcher pair to unique recovery backups."""
+    inspection = inspect_legacy_launchers(home)
+    if inspection["conflict"]:
+        raise ValueError("检测到未知 ~/.local/bin/claude.ps1 或 claude.cmd，拒绝覆盖")
+    if not inspection["detected"]:
+        return []
+
+    moved: List[Tuple[Path, Path]] = []
+    try:
+        for raw_path in inspection["paths"]:
+            source = Path(raw_path)
+            backup = reserve_unique_backup_path(source, timestamp, "pre_v6")
+            try:
+                os.replace(str(source), str(backup))
+            except BaseException:
+                try:
+                    backup.unlink()
+                except OSError:
+                    pass
+                raise
+            moved.append((source, backup))
+    except BaseException as migration_error:
+        rollback_errors: List[str] = []
+        for source, backup in reversed(moved):
+            if not backup.exists():
+                continue
+            try:
+                fd = os.open(str(source), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.close(fd)
+            except OSError as exc:
+                rollback_errors.append(f"{source}: {exc}")
+                continue
+            try:
+                os.replace(str(backup), str(source))
+            except OSError as exc:
+                try:
+                    source.unlink()
+                except OSError:
+                    pass
+                rollback_errors.append(f"{source}: {exc}")
+        if rollback_errors:
+            details = "; ".join(rollback_errors)
+            raise OSError(f"旧 launcher 迁移失败且回滚不完整: {details}") from migration_error
+        raise
+    return moved
+
+
+def resolve_upstream_candidates(home: Path, shell_kind: str) -> List[Dict[str, Any]]:
+    """Return ordered Claude entry-point candidates and rejection reasons."""
+    configured = (_env_case_insensitive("CLAUDE_KEYSMITH_CLAUDE_BIN") or "").strip()
+    if configured:
+        override = Path(configured).expanduser().resolve()
+        return [
+            _candidate(
+                "override",
+                override,
+                None if override.is_file() else "configured override is missing; fallback is disabled",
+            )
+        ]
+
+    if shell_kind != "powershell":
+        found = shutil.which("claude")
+        path = Path(found).resolve() if found else (home / ".local" / "bin" / "claude").resolve()
+        return [_candidate("path", path)]
+
+    candidates: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(kind: str, path: Path, reason: Optional[str] = None, eligible: bool = True) -> None:
+        key = _path_key(path)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(_candidate(kind, path, reason, eligible))
+
+    native = home / ".local" / "bin" / "claude.exe"
+    add("native", native)
+
+    prefixes = _npm_prefixes(home)
+    npm_prefix_keys = {_path_key(prefix) for prefix in prefixes}
+    for entry in _windows_path_entries():
+        if _path_key(entry) in npm_prefix_keys:
+            continue
+        path_exe = entry / "claude.exe"
+        if path_exe.is_file():
+            kind = "winget" if "winget" in str(path_exe).lower() else "path_native"
+            add(kind, path_exe)
+
+    for prefix in prefixes:
+        add(
+            "npm_package",
+            prefix / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe",
+        )
+
+    legacy_dir = _path_key(home / ".local" / "bin")
+    for prefix in prefixes:
+        for name in ("claude.cmd", "claude.ps1", "claude.exe"):
+            shim = prefix / name
+            if _path_key(prefix) == legacy_dir and name in ("claude.cmd", "claude.ps1"):
+                add("excluded_keysmith_launcher", shim, "keysmith-owned launcher excluded to prevent recursion", False)
+            else:
+                add("npm_shim", shim)
+    return candidates
+
+
+def select_upstream_candidate(candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    return next(
+        (candidate for candidate in candidates if candidate.get("eligible", True) and candidate.get("exists")),
+        None,
+    )
 
 
 def find_claude_binary(home: Path, shell_kind: str) -> Path:
@@ -235,21 +567,14 @@ def find_claude_binary(home: Path, shell_kind: str) -> Path:
 
     Override with $CLAUDE_KEYSMITH_CLAUDE_BIN.
     """
-    configured = os.environ.get("CLAUDE_KEYSMITH_CLAUDE_BIN")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    if shell_kind == "powershell":
-        found = (
-            shutil.which("claude.cmd")
-            or shutil.which("claude.exe")
-            or shutil.which("claude")
-        )
-        if found:
-            return Path(found).resolve()
-        appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
-        return appdata / "npm" / "claude.cmd"
-    found = shutil.which("claude")
-    return Path(found).resolve() if found else home / ".local" / "bin" / "claude"
+    candidates = resolve_upstream_candidates(home, shell_kind)
+    selected = select_upstream_candidate(candidates)
+    if selected is not None:
+        return Path(selected["path"])
+    eligible = next((candidate for candidate in candidates if candidate.get("eligible", True)), None)
+    if eligible is None:
+        raise FileNotFoundError("没有可用的 Claude Code 上游候选")
+    return Path(eligible["path"])
 
 
 def resolve_scope(scope: str, project_dir: Optional[str] = None) -> ScopePaths:
@@ -324,7 +649,15 @@ def user_runtime_paths() -> Dict[str, Any]:
     shell_kind = runtime_shell_kind()
     keysmith_dir = home / ".claude" / "keysmith"
     shell_rc = powershell_profile_path(home) if shell_kind == "powershell" else home / ".zshrc"
-    claude_bin = find_claude_binary(home, shell_kind)
+    upstream_candidates = resolve_upstream_candidates(home, shell_kind)
+    selected = select_upstream_candidate(upstream_candidates)
+    claude_bin = Path(selected["path"]) if selected else find_claude_binary(home, shell_kind)
+    legacy = inspect_legacy_launchers(home) if shell_kind == "powershell" else {
+        "detected": False,
+        "paths": [],
+        "conflict": False,
+        "conflict_paths": [],
+    }
     return {
         "home": home,
         "claude_dir": home / ".claude",
@@ -336,6 +669,13 @@ def user_runtime_paths() -> Dict[str, Any]:
         "shell_rc": shell_rc,
         "zshrc": shell_rc,  # backward-compat alias
         "claude_bin": claude_bin,
+        "upstream_candidates": upstream_candidates,
+        "upstream_path": str(selected["path"]) if selected else None,
+        "upstream_exists": selected is not None,
+        "legacy_launcher_detected": legacy["detected"],
+        "legacy_launcher_paths": legacy["paths"],
+        "legacy_launcher_conflict": legacy["conflict"],
+        "legacy_launcher_conflict_paths": legacy["conflict_paths"],
     }
 
 
@@ -344,18 +684,62 @@ def _powershell_quote(value: Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def render_shell_wrapper(claude_bin: Path, system_prompt: Path, append_prompt: Path, shell_kind: str = "zsh") -> str:
+def render_shell_wrapper(
+    claude_bin: Path,
+    system_prompt: Path,
+    append_prompt: Path,
+    shell_kind: str = "zsh",
+    upstream_candidates: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """Generate a managed shell wrapper for zsh or PowerShell."""
     if shell_kind == "powershell":
+        candidate_paths = [
+            Path(candidate["path"])
+            for candidate in (upstream_candidates or [_candidate("configured", claude_bin)])
+            if candidate.get("eligible", True)
+        ]
+        candidate_lines = [f"    {_powershell_quote(path)}" for path in candidate_paths]
         return "\n".join(
             [
                 SHELL_BEGIN,
+                SHELL_VERSION_MARKER,
                 "# Managed by claude-keysmith. Do not edit by hand.",
                 "function global:claude {",
-                f"  & {_powershell_quote(claude_bin)} `",
-                f"    --system-prompt-file {_powershell_quote(system_prompt)} `",
-                f"    --append-system-prompt-file {_powershell_quote(append_prompt)} `",
-                "    @args",
+                "  $ErrorActionPreference = 'Stop'",
+                "  $PSNativeCommandUseErrorActionPreference = $false",
+                f"  $systemPrompt = {_powershell_quote(system_prompt)}",
+                f"  $appendPrompt = {_powershell_quote(append_prompt)}",
+                "  foreach ($required in @($systemPrompt, $appendPrompt)) {",
+                "    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {",
+                "      throw \"claude-keysmith required prompt is missing: $required\"",
+                "    }",
+                "  }",
+                "  $upstreamCandidates = @(",
+                *candidate_lines,
+                "  )",
+                f"  $deadline = [DateTime]::UtcNow.AddSeconds({WINDOWS_UPSTREAM_RETRY_SECONDS})",
+                "  do {",
+                "    foreach ($candidate in $upstreamCandidates) {",
+                "      if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }",
+                "      try {",
+                "        & $candidate `",
+                "          --system-prompt-file $systemPrompt `",
+                "          --append-system-prompt-file $appendPrompt `",
+                "          @args",
+                "        $claudeKeysmithExitCode = $LASTEXITCODE",
+                "      } catch [System.Management.Automation.CommandNotFoundException] {",
+                "        continue",
+                "      } catch [System.Management.Automation.ItemNotFoundException] {",
+                "        continue",
+                "      }",
+                "      if ($null -eq $claudeKeysmithExitCode) { $claudeKeysmithExitCode = 0 }",
+                "      $global:LASTEXITCODE = $claudeKeysmithExitCode",
+                "      return",
+                "    }",
+                "    if ([DateTime]::UtcNow -ge $deadline) { break }",
+                f"    Start-Sleep -Milliseconds {WINDOWS_UPSTREAM_RETRY_MILLISECONDS}",
+                "  } while ($true)",
+                "  throw 'Claude Code entry point is unavailable after 10 seconds. Repair or reinstall Claude Code, then retry.'",
                 "}",
                 SHELL_END,
                 "",
@@ -365,6 +749,7 @@ def render_shell_wrapper(claude_bin: Path, system_prompt: Path, append_prompt: P
     return "\n".join(
         [
             SHELL_BEGIN,
+            SHELL_VERSION_MARKER,
             "# Managed by claude-keysmith. Do not edit by hand.",
             "# Effective NSFW / creative delivery depends on CLI append, not settings.json alone.",
             "claude() {",
@@ -383,6 +768,11 @@ def shell_block_pattern() -> re.Pattern:
     begin = re.escape(SHELL_BEGIN)
     end = re.escape(SHELL_END)
     return re.compile(rf"(?ms)^{begin}\n.*?^{end}\n?")
+
+
+def shell_wrapper_is_current(content: str, expected_block: str) -> bool:
+    match = shell_block_pattern().search(content)
+    return bool(match and match.group(0) == expected_block)
 
 
 def ensure_shell_wrapper(content: str, block: str) -> Tuple[str, bool]:
@@ -521,7 +911,18 @@ def command_install(args) -> int:
             settings = load_settings(rt["settings"])
             max_tokens = getattr(args, "max_tokens", None)
             settings_updated, settings_changed = align_settings_system_prompt(settings, system_body, max_tokens)
-            shell_block = render_shell_wrapper(rt["claude_bin"], rt["system_prompt"], rt["append_prompt"], rt["shell_kind"])
+            if rt["legacy_launcher_conflict"]:
+                conflicts = ", ".join(rt["legacy_launcher_conflict_paths"])
+                raise ValueError(
+                    "检测到未知 Windows launcher，拒绝在任何写入前继续: " + conflicts
+                )
+            shell_block = render_shell_wrapper(
+                rt["claude_bin"],
+                rt["system_prompt"],
+                rt["append_prompt"],
+                rt["shell_kind"],
+                rt["upstream_candidates"],
+            )
             shell_rc_current = read_text_if_exists(rt["shell_rc"])
             shell_rc_updated, shell_rc_changed = ensure_shell_wrapper(shell_rc_current, shell_block)
             runtime_plan = {
@@ -535,6 +936,8 @@ def command_install(args) -> int:
                 "shell_block": shell_block,
             }
             print(f"shell kind: {rt['shell_kind']}")
+            print(f"upstream path: {rt['upstream_path'] or 'unavailable'}")
+            print(f"upstream exists: {'yes' if rt['upstream_exists'] else 'no'}")
             print(f"system-prompt file: {rt['system_prompt']}")
             print(f"append-prompt file: {rt['append_prompt']}")
             print(f"settings.json: {rt['settings']}")
@@ -544,6 +947,10 @@ def command_install(args) -> int:
             print(f"append-prompt bytes: {len(append_content.encode('utf-8'))}")
             if max_tokens is not None:
                 print(f"max_tokens: {max_tokens}")
+            if rt["legacy_launcher_detected"]:
+                print("legacy Windows launcher: recognized (will migrate with --yes)")
+                for legacy_path in rt["legacy_launcher_paths"]:
+                    print(f"  - {legacy_path}")
         except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             print(f"[错误] runtime 准备失败: {exc}")
             return 1
@@ -587,6 +994,17 @@ def command_install(args) -> int:
             print(f"[备份] {rt['shell_rc'].name} → {backup.name}")
         atomic_write_text(rt["shell_rc"], runtime_plan["shell_rc_updated"])
         print(f"[写入] {rt['shell_rc']} (managed claude wrapper)")
+
+        # Keep the old PATH launchers available until every runtime file is durable.
+        if rt["legacy_launcher_detected"]:
+            try:
+                moved = migrate_legacy_launchers(rt["home"], timestamp)
+            except (OSError, ValueError) as exc:
+                print(f"[错误] 旧 Windows launcher 迁移失败: {exc}")
+                return 1
+            for source, backup in moved:
+                print(f"[迁移] {source} → {backup}")
+
         if rt["shell_kind"] == "powershell":
             print("[提示] 新开一个 PowerShell，或执行: . $PROFILE")
         else:
@@ -625,12 +1043,31 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
             rt = user_runtime_paths()
             system_exists = rt["system_prompt"].is_file()
             append_exists = rt["append_prompt"].is_file()
+            system_complete = bool(system_exists and rt["system_prompt"].stat().st_size > 0)
+            append_complete = bool(append_exists and rt["append_prompt"].stat().st_size > 0)
             settings = load_settings(rt["settings"]) if rt["settings"].exists() else {}
             system_body = read_text_if_exists(rt["system_prompt"])
             settings_aligned = bool(system_body) and settings.get("systemPrompt") == system_body
             shell_rc_content = read_text_if_exists(rt["shell_rc"])
             wrapper_present = bool(shell_block_pattern().search(shell_rc_content)) or bool(LEGACY_WRAPPER_RE.search(shell_rc_content))
             managed_wrapper = bool(shell_block_pattern().search(shell_rc_content))
+            expected_wrapper = render_shell_wrapper(
+                rt["claude_bin"],
+                rt["system_prompt"],
+                rt["append_prompt"],
+                rt["shell_kind"],
+                rt["upstream_candidates"],
+            )
+            wrapper_current = shell_wrapper_is_current(shell_rc_content, expected_wrapper)
+            runtime_ready = bool(
+                system_complete
+                and append_complete
+                and settings_aligned
+                and wrapper_current
+                and rt["upstream_exists"]
+                and not rt["legacy_launcher_detected"]
+                and not rt["legacy_launcher_conflict"]
+            )
             status["runtime"] = {
                 "supported": True,
                 "shell_kind": rt["shell_kind"],
@@ -643,9 +1080,16 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
                 "settings_system_prompt_aligned": settings_aligned,
                 "shell_wrapper_present": wrapper_present,
                 "shell_wrapper_managed": managed_wrapper,
-                "runtime_ready": bool(
-                    system_exists and append_exists and managed_wrapper
-                ),
+                "upstream_candidates": rt["upstream_candidates"],
+                "upstream_path": rt["upstream_path"],
+                "upstream_exists": rt["upstream_exists"],
+                "shell_wrapper_current": wrapper_current,
+                "legacy_launcher_detected": rt["legacy_launcher_detected"],
+                "legacy_launcher_paths": rt["legacy_launcher_paths"],
+                "legacy_launcher_conflict": rt["legacy_launcher_conflict"],
+                "legacy_launcher_conflict_paths": rt["legacy_launcher_conflict_paths"],
+                "upgrade_required": not runtime_ready,
+                "runtime_ready": runtime_ready,
                 "note": (
                     "Hard creative/NSFW delivery on current Claude Code requires the shell "
                     "wrapper's --append-system-prompt-file; settings.systemPrompt alone is insufficient."
@@ -685,6 +1129,13 @@ def command_status(args) -> int:
             print(
                 f"shell wrapper: {'managed' if rt['shell_wrapper_managed'] else ('legacy/present' if rt['shell_wrapper_present'] else 'no')}"
             )
+            print(f"shell wrapper current: {'yes' if rt['shell_wrapper_current'] else 'no'}")
+            print(f"upstream: {rt['upstream_path'] or 'unavailable'}")
+            print(f"upstream exists: {'yes' if rt['upstream_exists'] else 'no'}")
+            print(f"legacy launcher: {'yes' if rt['legacy_launcher_detected'] else 'no'}")
+            if rt["legacy_launcher_conflict"]:
+                print("legacy launcher conflict: yes")
+            print(f"upgrade required: {'yes' if rt['upgrade_required'] else 'no'}")
             print(f"runtime ready: {'yes' if rt['runtime_ready'] else 'no'}")
             print(f"note: {rt['note']}")
     print(f"installed: {'yes' if status['installed'] else 'no'}")
@@ -793,46 +1244,48 @@ def command_restore(args) -> int:
 
 
 def command_runtime_doctor(args) -> int:
-    """Show what actually matters for creative/NSFW delivery on current Claude Code."""
+    """Report runtime paths and repair actions without exposing settings values."""
     try:
         rt = user_runtime_paths()
+        shell_rc_content = read_text_if_exists(rt["shell_rc"])
+        system_body = read_text_if_exists(rt["system_prompt"])
+        settings = load_settings(rt["settings"]) if rt["settings"].exists() else {}
+        selected = select_upstream_candidate(rt["upstream_candidates"])
+        expected_wrapper = render_shell_wrapper(
+            rt["claude_bin"],
+            rt["system_prompt"],
+            rt["append_prompt"],
+            rt["shell_kind"],
+            rt["upstream_candidates"],
+        )
+        wrapper_current = shell_wrapper_is_current(shell_rc_content, expected_wrapper)
+        repair_actions: List[str] = []
+        if not rt["upstream_exists"]:
+            repair_actions.append("Repair or reinstall Claude Code, then rerun doctor.")
+        if rt["legacy_launcher_detected"]:
+            repair_actions.append("Run install --scope user --runtime --yes to migrate the recognized legacy launcher pair.")
+        if rt["legacy_launcher_conflict"]:
+            repair_actions.append("Inspect the unknown ~/.local/bin launcher files; keysmith will not overwrite them.")
+        if not wrapper_current:
+            repair_actions.append("Run install --scope user --runtime --yes to install the current PowerShell wrapper.")
+        if not rt["system_prompt"].is_file() or not rt["append_prompt"].is_file():
+            repair_actions.append("Run install --scope user --runtime --yes to restore keysmith prompt files.")
+        if not (system_body and settings.get("systemPrompt") == system_body):
+            repair_actions.append("Run install --scope user --runtime --yes to realign settings.systemPrompt.")
+        if not repair_actions:
+            repair_actions.append("No repair action required.")
+
         status = {
-            "claude_bin": str(rt["claude_bin"]),
-            "claude_bin_exists": rt["claude_bin"].exists(),
+            "installation_type": selected["kind"] if selected else "unavailable",
+            "upstream_candidates": rt["upstream_candidates"],
+            "upstream_path": rt["upstream_path"],
             "system_prompt_file": str(rt["system_prompt"]),
-            "system_prompt_exists": rt["system_prompt"].is_file(),
             "append_prompt_file": str(rt["append_prompt"]),
-            "append_prompt_exists": rt["append_prompt"].is_file(),
             "settings_file": str(rt["settings"]),
             "shell_kind": rt["shell_kind"],
             "shell_rc": str(rt["shell_rc"]),
+            "repair_actions": repair_actions,
         }
-        if rt["system_prompt"].is_file():
-            status["system_prompt_bytes"] = rt["system_prompt"].stat().st_size
-        if rt["append_prompt"].is_file():
-            status["append_prompt_bytes"] = rt["append_prompt"].stat().st_size
-            status["append_prompt_preview"] = rt["append_prompt"].read_text(encoding="utf-8")[:180]
-        settings = load_settings(rt["settings"]) if rt["settings"].exists() else {}
-        status["settings_has_systemPrompt"] = "systemPrompt" in settings
-        status["settings_systemPrompt_len"] = len(settings.get("systemPrompt") or "")
-        status["settings_model"] = settings.get("model")
-        status["anthropic_model"] = (settings.get("env") or {}).get("ANTHROPIC_MODEL") if isinstance(settings.get("env"), dict) else None
-        status["base_url"] = (settings.get("env") or {}).get("ANTHROPIC_BASE_URL") if isinstance(settings.get("env"), dict) else None
-        shell_rc_content = read_text_if_exists(rt["shell_rc"])
-        status["shell_wrapper_managed"] = bool(shell_block_pattern().search(shell_rc_content))
-        status["shell_wrapper_legacy"] = bool(LEGACY_WRAPPER_RE.search(shell_rc_content))
-        status["effective_command"] = (
-            f'"{rt["claude_bin"]}" --system-prompt-file "{rt["system_prompt"]}" '
-            f'--append-system-prompt-file "{rt["append_prompt"]}"'
-        )
-        status["findings"] = [
-            "CLAUDE.md / keysmith import alone is not enough for hard NSFW on current Claude models.",
-            "settings.systemPrompt alone is not enough.",
-            "settings.appendSystemPrompt / appendSystemPromptFile were not honored in 2026-07-28 probes.",
-            "CLI --append-system-prompt or --append-system-prompt-file is the working layer.",
-            "Prefer model claude-opus-5 on lgw; fable/sonnet were stricter in probes.",
-            "Soft continuation prompts pass more often than cold hard explicit asks.",
-        ]
     except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(f"[错误] {exc}")
         return 1
@@ -842,18 +1295,17 @@ def command_runtime_doctor(args) -> int:
         return 0
 
     print(f"shell kind: {status.get('shell_kind', 'N/A')}")
-    print(f"claude bin: {status['claude_bin']} ({'yes' if status['claude_bin_exists'] else 'missing'})")
-    print(f"system-prompt: {status['system_prompt_file']} ({'yes' if status['system_prompt_exists'] else 'no'})")
-    print(f"append-prompt: {status['append_prompt_file']} ({'yes' if status['append_prompt_exists'] else 'no'})")
-    print(f"settings.systemPrompt: {'yes' if status['settings_has_systemPrompt'] else 'no'} len={status['settings_systemPrompt_len']}")
-    print(f"settings.model: {status.get('settings_model')}")
-    print(f"ANTHROPIC_MODEL: {status.get('anthropic_model')}")
-    print(f"BASE_URL: {status.get('base_url')}")
-    print(f"shell wrapper managed: {'yes' if status['shell_wrapper_managed'] else 'no'}")
-    print(f"shell wrapper legacy: {'yes' if status['shell_wrapper_legacy'] else 'no'}")
-    print(f"effective: {status['effective_command']}")
-    print("findings:")
-    for item in status["findings"]:
+    print(f"installation type: {status['installation_type']}")
+    print(f"upstream: {status['upstream_path'] or 'unavailable'}")
+    print("upstream candidates:")
+    for candidate in status["upstream_candidates"]:
+        print(f"  - {candidate['kind']}: {candidate['path']} ({candidate['reason']})")
+    print(f"system-prompt path: {status['system_prompt_file']}")
+    print(f"append-prompt path: {status['append_prompt_file']}")
+    print(f"settings path: {status['settings_file']}")
+    print(f"shell profile path: {status['shell_rc']}")
+    print("repair actions:")
+    for item in status["repair_actions"]:
         print(f"  - {item}")
     return 0
 
@@ -873,6 +1325,7 @@ def build_parser() -> argparse.ArgumentParser:
   %(prog)s restore --target ./CLAUDE.md --backup ./CLAUDE.md.bak_YYYYMMDD_HHMMSS --yes
         """,
     )
+    parser.add_argument("--version", action="version", version=f"claude-keysmith {VERSION}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_scope_args(subparser: argparse.ArgumentParser) -> None:
