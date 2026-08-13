@@ -5,4 +5,5 @@ __pycache__/
 htmlcov/
 .DS_Store
 .venv/
+.venv-build/
 .env

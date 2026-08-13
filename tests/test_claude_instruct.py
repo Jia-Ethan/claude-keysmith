@@ -538,9 +538,10 @@ def test_windows_style_runtime_install_uses_powershell_profile(tmp_path):
     assert "# existing powershell profile" in profile_after
 
 
-def test_version_reports_v6(tmp_path):
+def test_version_reports_current_version(tmp_path):
     result = run_cli(["--version"], home=tmp_path / "home")
-    assert result.stdout.strip() == "claude-keysmith v6"
+    assert result.stdout.strip() == f"claude-keysmith {claude_instruct.VERSION}"
+    assert claude_instruct.VERSION >= "v7"
 
 
 def test_windows_upstream_override_is_strict_even_when_other_candidates_exist(tmp_path, monkeypatch):
