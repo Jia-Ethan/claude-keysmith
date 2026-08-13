@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### JSON 契约、事务恢复层与桌面客户端 (beta)
+
+**`claude-keysmith/v1` JSON 契约：**
+
+- `install` / `status` / `doctor` / `uninstall` / `restore` 支持 `--json` 稳定输出；写操作区分 `preview`（默认）与 `execute`（`--yes`）两种 mode，统一携带 `actions` / `warnings` / `blockers` / `backups` 证据列表。`blockers` 非空或 `ok:false` 即失败关闭。
+- 新增只读命令 `backups --scope … --json`：只枚举通过命名规则校验的 keysmith 受控备份（`<target>.bak_YYYYMMDD_HHMMSS…`），供受控恢复选择。
+- 新增命令 `recover --scope …`：预览中断事务的残留与修复计划，`--yes` 执行恢复，重复执行幂等。
+- `status --json` 在保留全部历史扁平键的同时新增结构化块：`presence`、`alignment`、`source_identity`、`runtime_readiness`、`recovery_state`。
+- `restore` 新增可选 `--scope` / `--project-dir` 与 `--json`；受控备份（同目录、命名匹配的 `*.bak_*`）恢复走 journal/lock 事务，恢复前再生成 `*_pre_restore` 安全备份。
+- `doctor --json` 键集合固定为 9 个不变，永不输出 Base URL / token / cookie / 非目标 settings 字段。契约参考见 `docs/json-contract.md`。
+
+**Durable journal + write lock：**
+
+- 所有写路径（install / uninstall / 受控 restore）由 scope 本地的排他锁（`.keysmith.lock`，O_EXCL，含 `{pid,label,acquired_at}`）与持久化事务日志（`.journal-<uuid>.json`，`claude-keysmith-journal/v1`）保护；每个 mutation 前后原子落盘 before/after 指纹。
+- 两阶段 `pending` → `committed`：commit 前中断逆序回滚到之前的状态（恢复指纹校验过的备份，或删除事务新建文件）；commit 后永不反转，只做残留核验，核验干净的 journal 被下一次写入或 `recover` 消费。
+- 失败关闭：活跃他方锁、损坏 journal、未知修改（指纹既不等于 before 也不等于 after）、回滚目标被重建、找不到匹配备份等情况一律阻塞并保留证据。设计见 `docs/transaction-recovery.md`。
+
+**unix wrapper 动态重解析（VERSION v6 → v7）：**
+
+- 修复 macOS / Linux wrapper 将 `command -v claude` 的符号链接解析结果（版本目录）烙进 wrapper，导致 Claude 更新切换版本后失效的问题。
+- wrapper 保留已解析路径作为快路径；路径消失时每次调用重新经 `command -v claude` 解析（zsh 下以 `disable -f claude` / `enable -f claude` 包裹，附 `command -v -p` 兜底）；全部解析失败返回 127 并给出干净诊断。
+
+**参数校验：**
+
+- `--max-tokens` 经 argparse `type=positive_int` 校验为正整数；0 / 负数 / 非数字给出干净的 usage error。runtime 仍为 user scope 专属。
+
+**桌面客户端 `gui/`（`0.1.0-beta.1`，channel `beta`，未签名，未发布）：**
+
+- Tauri 2 + React 19 + Vite + Tailwind 4 + Radix + Motion；PyInstaller onefile sidecar（`claude-keysmith-cli`）与 CLI 同源构建；react-i18next（zh-CN/en）。
+- 页面：Dashboard / 三步 Deploy 向导 / Manage（uninstall、受控备份 restore、recover、repair）/ Settings。
+- 进程边界：argv 数组调用（无 shell 拼接）、stdout/stderr 各 2 MiB 上限（截断失败关闭）、超时杀整棵进程树（unix 进程组 `kill(-pid)`；windows `taskkill /T /F`）、`kill_on_drop`。
+- 单实例、全局写互斥（操作租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
+- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 配置就绪但 **PENDING 原生 runner 验收**；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
+
 ### Windows wrapper retry safety
 
 - PowerShell wrapper 只在调用运算符无法解析尚未启动的候选入口时继续选择其他候选。

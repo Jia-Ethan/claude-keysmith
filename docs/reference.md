@@ -119,6 +119,8 @@ python3 claude-instruct.py restore \
 
 恢复会先为当前 target 创建新的 `pre_restore` 安全备份。
 
+从 v7 起，写操作由 scope 本地的 durable journal（`.journal-<uuid>.json`）与排他写锁（`.keysmith.lock`）保护；崩溃或 Ctrl+C 中断后运行 `recover --scope …`（默认预览，`--yes` 执行，幂等）回滚未提交事务，`backups --scope … --json` 只读枚举受控备份。完整设计见 [`transaction-recovery.md`](transaction-recovery.md)，JSON 字段见 [`json-contract.md`](json-contract.md)。
+
 ## 状态与排障
 
 ```bash
