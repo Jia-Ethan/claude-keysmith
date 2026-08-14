@@ -43,7 +43,7 @@
 | 超时杀整棵进程树 | `cargo test timeout_terminates_descendant_processes`：真实 `/bin/sh` 派生 `sleep 60` 后代，100ms 超时后验证后代 PID 被杀 | 通过 |
 | 2 MiB 输出失败关闭 | `cargo test oversized_output_fails_closed`：真实 `dd` 输出 3 MiB，`cli_run` 返回明确错误（"CLI 输出不完整，已阻止继续操作"），不解析半截输出；前端 parser 对未闭合 JSON 返回"输出不完整"（vitest 覆盖） | 通过 |
 | pending journal 恢复链 | `test_recover_rolls_back_pending_journal_preview_then_execute`：构造含真实 before/after 指纹的 pending journal；后续写入被阻塞，preview 报告计划且不修改目标，execute 回滚并消费 journal，重复 recover 幂等 | 通过（事务 fixture；不等同于真实进程强杀） |
-| 旧 launcher 首个移动后强杀 | source CLI 事务测试：子进程执行 runtime install，在首个 `claude.ps1` no-overwrite move 完成、after-move 进度尚未落盘时由父进程强杀；pending journal 阻塞新写入，preview 前后快照一致且计划 `restore-moved`，execute 精确还原 `.ps1/.cmd` 与此前所有 runtime 写入并清理 journal/lock/备份 | macOS 本地通过；`test_forced_kill_after_first_legacy_launcher_move_recovers_exactly`。候选 workflow 已将同一测试设为 Windows source-CLI 门禁，待本 PR Windows CI 取证；不等同于已安装冻结 sidecar 或实体机 UI 验收 |
+| 旧 launcher 首个移动后强杀 | source CLI 事务测试：子进程执行 runtime install，在首个 `claude.ps1` no-overwrite move 完成、after-move 进度尚未落盘时由父进程强杀；pending journal 阻塞新写入，preview 前后快照一致且计划 `restore-moved`，execute 精确还原 `.ps1/.cmd` 与此前所有 runtime 写入并清理 journal/lock/备份 | macOS 本地通过；`test_forced_kill_after_first_legacy_launcher_move_recovers_exactly`。Windows source-CLI 候选门禁已在 CI run `31810727817` 通过；不等同于已安装冻结 sidecar 或实体机 UI 验收 |
 | journal after 证据持久化 | `test_transaction_helpers_persist_after_evidence_and_reject_later_edit`：生产事务 helper 把 mutation 后指纹写回实际 journal；随后第三方修改会被识别为未知修改并失败关闭 | 通过 |
 | recover 预览纯只读 | `snapshot_tree` 对整个隔离 HOME 比较文件内容、mode 与 mtime；可恢复、多步同路径与 marker 场景 preview 前后快照一致 | 通过 |
 | 同路径多步逆序恢复 | `test_recover_repeated_writes_use_virtual_reverse_state`：同一路径 `A → B → C` 的 preview 与 execute 均按 `C → B → A` 判定，最终恢复原内容 | 通过 |

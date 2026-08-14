@@ -48,7 +48,7 @@ CLI 稳定性与可编程性版本。
 
 **发布门禁**：
 
-- [`beta-acceptance.md`](beta-acceptance.md) 第二节全部未完成条目必须完成并留存证据。macOS GUI UI 与真实进程强杀恢复 E2E 已通过；Windows 原生自动化链已通过，source-CLI launcher 恢复测试已纳入候选 workflow，待本 PR Windows CI 取证；其余门禁集中在 Gatekeeper、用户安装的 Claude 升级与 Windows 实体机用户视角/强杀恢复。
+- [`beta-acceptance.md`](beta-acceptance.md) 第二节全部未完成条目必须完成并留存证据。macOS GUI UI 与真实进程强杀恢复 E2E 已通过；Windows 原生自动化链及 source-CLI launcher 恢复门禁已在 CI run `31810727817` 通过；其余门禁集中在 Gatekeeper、用户安装的 Claude 升级与 Windows 实体机用户视角/强杀恢复。
 - 两个平台仅发布实际通过验收的 main 候选，且 `release_eligible:true`，`BUILD_INFO.json` / LF-only `SHA256SUMS` 与安装器、sidecar 一致；tag、Release 与外发仍需单独明确授权。
 - 发现问题请开 issue。
 
