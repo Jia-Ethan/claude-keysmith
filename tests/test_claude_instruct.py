@@ -1302,7 +1302,8 @@ def test_powershell_wrapper_waits_for_late_upstream_and_returns_control(tmp_path
     def create_upstream_later():
         time.sleep(0.6)
         upstream.parent.mkdir(parents=True, exist_ok=True)
-        upstream.write_text(
+        staged_upstream = upstream.with_name(f".{upstream.name}.tmp")
+        staged_upstream.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "from pathlib import Path\n"
@@ -1310,7 +1311,9 @@ def test_powershell_wrapper_waits_for_late_upstream_and_returns_control(tmp_path
             f"raise SystemExit({upstream_exit})\n",
             encoding="utf-8",
         )
-        upstream.chmod(0o755)
+        staged_upstream.chmod(0o755)
+        # Publish the fixture only after it is complete and executable.
+        staged_upstream.replace(upstream)
 
     creator = threading.Thread(target=create_upstream_later)
     creator.start()
