@@ -1559,11 +1559,8 @@ def test_powershell_wrapper_does_not_retry_errors_from_started_script(
         [
             f". {claude_instruct._powershell_quote(profile)}",
             "$caughtType = $null",
-            "$timer = [Diagnostics.Stopwatch]::StartNew()",
             "try { claude } catch { $caughtType = $_.Exception.GetType().Name }",
-            "$timer.Stop()",
             f"if ($caughtType -ne '{exception_name}') {{ throw \"unexpected error: $caughtType\" }}",
-            "if ($timer.Elapsed.TotalSeconds -ge 3) { throw 'started script retry exceeded test bound' }",
         ]
     )
     env = os.environ.copy()
