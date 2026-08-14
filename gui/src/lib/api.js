@@ -16,14 +16,12 @@ import {
   buildRecoverArgs,
   buildDoctorArgs,
 } from "./parser.js";
-import { beginOperation, endOperation } from "./store.js";
+import { beginOperation, beginExclusiveOperation, endOperation } from "./store.js";
 
-function invokeTrackedOperation(command, payload) {
-  const operationLease = beginOperation();
+function invokeWithLease(acquireLease, command, payload, exhaustedMessage) {
+  const operationLease = acquireLease();
   if (!operationLease) {
-    return Promise.reject(
-      new Error("Application exit is pending; refusing to start another backend operation."),
-    );
+    return Promise.reject(new Error(exhaustedMessage));
   }
   try {
     return Promise.resolve(invoke(command, payload)).finally(() => {
@@ -35,10 +33,42 @@ function invokeTrackedOperation(command, payload) {
   }
 }
 
+function invokeTrackedOperation(command, payload) {
+  return invokeWithLease(
+    beginOperation,
+    command,
+    payload,
+    "Application exit is pending; refusing to start another backend operation.",
+  );
+}
+
+/**
+ * 独占执行：全局写互斥。已有任何在途操作或退出排队时拒绝启动。
+ * 写操作的 execute 阶段必须走这里，preview / 读操作用共享租约即可。
+ */
+function invokeExclusiveOperation(command, payload) {
+  return invokeWithLease(
+    beginExclusiveOperation,
+    command,
+    payload,
+    "Another operation is in progress or application exit is pending; refusing to start a write operation.",
+  );
+}
+
 /** 执行 CLI 命令，返回 { stdout, stderr, exit_code, timed_out } */
 export function cliRun(args, timeoutMs = 30_000) {
   const { cliPath } = getSettings();
   return invokeTrackedOperation("cli_run", {
+    cliPath: cliPath || null,
+    args,
+    timeoutMs,
+  });
+}
+
+/** 独占执行 CLI 写命令（全局写互斥）。 */
+export function cliRunExclusive(args, timeoutMs = 30_000) {
+  const { cliPath } = getSettings();
+  return invokeExclusiveOperation("cli_run", {
     cliPath: cliPath || null,
     args,
     timeoutMs,
@@ -110,7 +140,7 @@ export function previewInstall(options) {
 }
 
 export function executeInstall(options) {
-  return cliRun([...buildInstallArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
+  return cliRunExclusive([...buildInstallArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
 }
 
 export function previewUninstall(options) {
@@ -118,7 +148,7 @@ export function previewUninstall(options) {
 }
 
 export function executeUninstall(options) {
-  return cliRun([...buildUninstallArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
+  return cliRunExclusive([...buildUninstallArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
 }
 
 export function previewRestore(options) {
@@ -126,7 +156,7 @@ export function previewRestore(options) {
 }
 
 export function executeRestore(options) {
-  return cliRun([...buildRestoreArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
+  return cliRunExclusive([...buildRestoreArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
 }
 
 export function previewRecover(options) {
@@ -134,7 +164,7 @@ export function previewRecover(options) {
 }
 
 export function executeRecover(options) {
-  return cliRun([...buildRecoverArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
+  return cliRunExclusive([...buildRecoverArgs(options), "--json", "--yes"], 120_000).then(parseWriteReport);
 }
 
 /** 是否在 Tauri 环境外（纯浏览器预览） */

@@ -11,13 +11,28 @@ let state = {
 };
 let cliCheckGeneration = 0;
 const operationLeases = new Set();
+let exclusiveOperationLease = null;
 let pendingExitHandler = null;
 let pendingExitInFlight = false;
 
 const listeners = new Set();
 
 function emit() {
-  listeners.forEach((fn) => fn());
+  listeners.forEach((fn) => {
+    try {
+      fn();
+    } catch (error) {
+      // A broken subscriber must not prevent a caller from receiving and later
+      // releasing its lease. Surface the error outside the coordinator update.
+      queueMicrotask(() => {
+        if (typeof globalThis.reportError === "function") {
+          globalThis.reportError(error);
+        } else {
+          console.error("Store subscriber failed", error);
+        }
+      });
+    }
+  });
 }
 
 export function getState() {
@@ -107,30 +122,37 @@ function runPendingExitIfIdle() {
   );
 }
 
-/** 获取一个独立操作租约；退出已排队或执行时拒绝启动新操作。 */
-export function beginOperation() {
-  if (pendingExitHandler !== null || pendingExitInFlight) return null;
-  const lease = Symbol("operation");
+function acquireOperationLease(mode) {
+  if (
+    pendingExitHandler !== null
+    || pendingExitInFlight
+    || (mode === "shared" && exclusiveOperationLease !== null)
+    || (mode === "exclusive" && operationLeases.size > 0)
+  ) {
+    return null;
+  }
+  const lease = Symbol(`${mode}-operation`);
   operationLeases.add(lease);
+  if (mode === "exclusive") exclusiveOperationLease = lease;
   updateOperationState();
   return lease;
 }
 
+/** 获取共享操作租约；活动写操作或退出屏障存在时拒绝启动。 */
+export function beginOperation() {
+  return acquireOperationLease("shared");
+}
+
 /** 原子获取全局写操作租约；已有操作或退出请求时返回 null。 */
 export function beginExclusiveOperation() {
-  if (
-    operationLeases.size > 0
-    || pendingExitHandler !== null
-    || pendingExitInFlight
-  ) {
-    return null;
-  }
-  return beginOperation();
+  return acquireOperationLease("exclusive");
 }
 
 /** 幂等释放操作租约；最后一个租约结束后执行排队的退出。 */
 export function endOperation(lease) {
-  if (!operationLeases.delete(lease)) return false;
+  if (!operationLeases.has(lease)) return false;
+  operationLeases.delete(lease);
+  if (exclusiveOperationLease === lease) exclusiveOperationLease = null;
   updateOperationState();
   runPendingExitIfIdle();
   return true;
@@ -154,6 +176,7 @@ export function resetOperationCoordinatorForTests() {
     throw new Error("Operation coordinator reset is only available in tests");
   }
   operationLeases.clear();
+  exclusiveOperationLease = null;
   pendingExitHandler = null;
   pendingExitInFlight = false;
   updateOperationState();

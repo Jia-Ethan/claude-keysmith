@@ -36,7 +36,7 @@ Rust 侧只负责"找到 CLI、按 argv 数组启动、限时限量收输出"：
 ## 状态与生命周期
 
 - **单实例**：`tauri-plugin-single-instance`，二次启动聚焦已有窗口。
-- **全局写互斥**：`src/lib/store.js` 的操作租约（operation lease）；`beginExclusiveOperation` 保证写操作全局唯一，退出排队中拒绝新操作。
+- **全局写互斥**：`src/lib/store.js` 的操作租约（operation lease）；`beginExclusiveOperation` 保证写操作全局唯一，退出排队中拒绝新操作。写路径由 `api.js` 的 `cliRunExclusive` 在 `executeInstall` / `executeUninstall` / `executeRestore` / `executeRecover` 上实际获取；preview 与读操作只用共享租约。进程间并发另由 CLI 的 `.keysmith.lock` 兜底。
 - **关闭屏障**：`windowLifecycle.js` 拦截 `onCloseRequested`，有活动操作时排队退出（queued close），空闲后销毁窗口；无托盘（no tray），关了就是退出。
 - **窗口**：1200×800，最小 900×600（`tauri.conf.json`）；CSP 收紧到 `default-src 'self'` + IPC，无远程资源。
 - **设置持久化**：`localStorage`（`src/lib/settings.js`）：CLI 路径覆盖、默认项目目录、最近项目（仅用户显式选择过的，最多 12 条，**永不扫描磁盘**）、语言、主题。
@@ -71,6 +71,7 @@ npm run dev                            # vite dev server（纯前端预览）
 npm run tauri dev                      # Tauri 开发窗口
 npm run build                          # vite 生产构建 → dist/
 npm run build:sidecar                  # PyInstaller onefile sidecar（仅本机原生目标）
+npm run bundle                         # 唯一发行打包入口：sidecar → Tauri overlay → 产物
 cd src-tauri && cargo fmt --check && cargo check --locked && cargo test --locked
 ```
 
@@ -81,4 +82,6 @@ sidecar 构建约定（`scripts/build-sidecar.mjs`）：
 - 构建产物复制为 `src-tauri/binaries/claude-keysmith-cli-<target-triple>[.exe]`，随后立刻执行 `--version` smoke，失败即构建失败。
 - Python 环境：激活的 venv 中 `pip install -r gui/requirements-build.txt`，或用 `PYTHON=/path/to/python` 指定。
 
-打包（`npm run bundle` / `tauri build`）在 worktree 之外执行；产物矩阵与验收状态见 [`platform-support.md`](platform-support.md) 与 [`beta-acceptance.md`](beta-acceptance.md)。
+sidecar 与 Rust 门禁的依赖关系：`externalBin` 只写在打包专用的 `src-tauri/tauri.bundle.conf.json`，**不**在常驻配置里。因此干净检出上 `cargo fmt --check` / `cargo check --locked` / `cargo test --locked` 无需先构建 sidecar。常驻配置还设置 `bundle.active=false`，所以裸 `tauri build` 只产 executable；显式 `--bundles` 也会被默认 bundle hook 拒绝，不能绕过 sidecar。只有 `npm run bundle` 会先构建 sidecar，再加载 overlay 启用 bundle、声明 `externalBin`，并按目标 triple 复核 sidecar。
+
+发行打包统一使用 `npm run bundle`，并在 worktree 之外执行；产物矩阵与验收状态见 [`platform-support.md`](platform-support.md) 与 [`beta-acceptance.md`](beta-acceptance.md)。

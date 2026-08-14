@@ -1,7 +1,6 @@
 {
   "bundle": {
     "targets": ["nsis"],
-    "externalBin": ["binaries/claude-keysmith-cli"],
     "windows": {
       "allowDowngrades": false,
       "webviewInstallMode": {

@@ -248,18 +248,69 @@ def test_max_tokens_rejects_non_numeric(tmp_path):
         check=False,
     )
     assert result.returncode != 0
+    assert result.stdout == ""
+    assert "usage:" in result.stderr
     assert "max-tokens" in result.stderr
     assert not (home / ".claude").exists()
 
 
-def test_max_tokens_json_error_is_fail_closed(tmp_path):
+@pytest.mark.parametrize("value", ["0", "-5", "abc"])
+def test_max_tokens_json_error_is_fail_closed(tmp_path, value):
     home = tmp_path / "home"
     env = zsh_runtime_env(home)
     result = run_cli(
-        ["install", "--scope", "user", "--runtime", "--max-tokens", "0", "--yes", "--json"],
+        ["install", "--scope", "user", "--runtime", "--max-tokens", value, "--yes", "--json"],
         home=home,
         extra_env=env,
         check=False,
     )
     assert result.returncode != 0
+    assert not (home / ".claude").exists()
+    # --json callers must still receive a contract document on stdout, not bare
+    # argparse usage text (the GUI would otherwise report "no stable JSON").
+    payload = json.loads(result.stdout)
+    assert payload["schema"] == "claude-keysmith/v1"
+    assert payload["operation"] == "install"
+    assert payload["mode"] == "execute"
+    assert payload["ok"] is False
+    assert payload["exit_status"] == 2
+    assert "max-tokens" in payload["error"]
+    assert payload["blockers"] == [payload["error"]]
+    assert payload["actions"] == []
+    # Human-readable usage stays on stderr.
+    assert "max-tokens" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mode_flags", "expected_mode"),
+    [
+        ([], "preview"),
+        (["--yes"], "execute"),
+        (["--yes", "--dry-run"], "preview"),
+    ],
+)
+def test_json_usage_error_mode_comes_from_raw_argv(tmp_path, mode_flags, expected_mode):
+    home = tmp_path / "home"
+    env = zsh_runtime_env(home)
+    result = run_cli(
+        [
+            "install",
+            "--scope",
+            "user",
+            "--runtime",
+            "--max-tokens",
+            "0",
+            *mode_flags,
+            "--json",
+        ],
+        home=home,
+        extra_env=env,
+        check=False,
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == expected_mode
+    assert payload["ok"] is False
+    assert payload["exit_status"] == 2
+    assert "usage:" in result.stderr
     assert not (home / ".claude").exists()

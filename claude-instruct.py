@@ -1204,15 +1204,6 @@ def tx_remove_step(journal: TransactionJournal, path: Path) -> None:
     journal_step_after(journal, step)
 
 
-def _rollback_moved_pairs(moved: List[Tuple[Path, Path]]) -> None:
-    for source, backup in reversed(moved):
-        if not backup.exists():
-            continue
-        if source.exists():
-            raise OSError(f"回滚目标已存在，拒绝覆盖: {source}")
-        os.replace(str(backup), str(source))
-
-
 def tx_migrate_legacy_launchers(journal: TransactionJournal, home: Path, timestamp: str) -> List[Tuple[Path, Path]]:
     moved = migrate_legacy_launchers(home, timestamp)
     if not moved:
@@ -1222,16 +1213,172 @@ def tx_migrate_legacy_launchers(journal: TransactionJournal, home: Path, timesta
     return moved
 
 
-def rollback_pending_journal(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Roll back a pending (never-committed) journal to the prior state."""
+def _pending_rollback_core(
+    record: Dict[str, Any], *, execute: bool
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Plan or execute one pending rollback through the same decision path.
+
+    The virtual state is updated after every successful inverse step. This is
+    required when one transaction writes the same path more than once: an
+    earlier step must be checked against the state produced by rolling back the
+    later step, not against the unchanged on-disk state used by a dry-run.
+    """
     actions: List[Dict[str, Any]] = []
     blockers: List[str] = []
+    virtual_evidence: Dict[str, Dict[str, Any]] = {}
+    virtual_present: Dict[str, Optional[bool]] = {}
+    virtual_bytes: Dict[str, bytes] = {}
 
     def report(action: str, path: Path, detail: str) -> None:
         actions.append({"action": action, "path": str(path), "detail": detail})
 
     def blocker(message: str) -> None:
         blockers.append(message)
+
+    def state_key(path: Path) -> str:
+        return _path_key(path)
+
+    def current_evidence(path: Path) -> Dict[str, Any]:
+        key = state_key(path)
+        if key not in virtual_evidence:
+            virtual_evidence[key] = file_evidence(path)
+        return virtual_evidence[key]
+
+    def current_present(path: Path) -> Optional[bool]:
+        key = state_key(path)
+        if key not in virtual_present:
+            try:
+                virtual_present[key] = os.path.lexists(str(path))
+            except OSError as exc:
+                virtual_present[key] = None
+                blocker(f"无法检查回滚目标状态 {path}: {exc}")
+        return virtual_present[key]
+
+    def remember_state(
+        path: Path,
+        evidence: Dict[str, Any],
+        *,
+        present: bool,
+        raw: Optional[bytes] = None,
+    ) -> None:
+        key = state_key(path)
+        virtual_evidence[key] = dict(evidence)
+        virtual_present[key] = present
+        if raw is None:
+            virtual_bytes.pop(key, None)
+        else:
+            virtual_bytes[key] = raw
+
+    def evidence_exists(evidence: Dict[str, Any]) -> bool:
+        if "exists" in evidence:
+            return bool(evidence.get("exists"))
+        return evidence.get("sha256") is not None
+
+    def matches_state(path: Path, expected: Dict[str, Any]) -> bool:
+        present = current_present(path)
+        if present is None:
+            return False
+        if not evidence_exists(expected):
+            return not present
+        current = current_evidence(path)
+        return (
+            present
+            and bool(current.get("exists"))
+            and current.get("sha256") == expected.get("sha256")
+        )
+
+    def read_current_bytes(path: Path) -> bytes:
+        key = state_key(path)
+        if key in virtual_bytes:
+            return virtual_bytes[key]
+        raw = path.read_bytes()
+        virtual_bytes[key] = raw
+        return raw
+
+    def verified_restore_source(
+        path: Path, before: Dict[str, Any], backup_str: Optional[str]
+    ) -> Optional[Tuple[Path, bytes]]:
+        expected_sha = before.get("sha256")
+        if expected_sha is None:
+            blocker(f"缺少事务前指纹，无法确认回滚内容: {path}")
+            return None
+
+        candidates: List[Path] = []
+        if backup_str:
+            candidates.append(Path(backup_str))
+        try:
+            candidates.extend(
+                sorted(
+                    path.parent.glob(f"{path.name}.bak_*"),
+                    key=lambda item: item.name,
+                    reverse=True,
+                )
+            )
+        except OSError as exc:
+            blocker(f"无法枚举备份，回滚受阻 {path}: {exc}")
+            return None
+
+        seen = set()
+        for candidate in candidates:
+            candidate_key = state_key(candidate)
+            if candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            evidence = current_evidence(candidate)
+            if (
+                not current_present(candidate)
+                or not evidence.get("exists")
+                or evidence.get("sha256") != expected_sha
+            ):
+                continue
+            try:
+                raw = read_current_bytes(candidate)
+            except OSError as exc:
+                blocker(f"无法读取已验证备份 {candidate}: {exc}")
+                return None
+            if hashlib.sha256(raw).hexdigest() != expected_sha:
+                blocker(f"备份在恢复检查期间发生变化，拒绝使用: {candidate}")
+                return None
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                blocker(f"回滚备份不是有效 UTF-8 文本 {candidate}: {exc}")
+                return None
+            return candidate, raw
+
+        blocker(f"找不到匹配事务前指纹的备份，回滚受阻: {path}")
+        return None
+
+    def restore_prior_state(
+        path: Path, before: Dict[str, Any], backup_str: Optional[str]
+    ) -> None:
+        if not evidence_exists(before):
+            if execute:
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    blocker(f"无法移除事务新建文件 {path}: {exc}")
+                    return
+            remember_state(
+                path,
+                {"sha256": None, "size_bytes": None, "exists": False},
+                present=False,
+            )
+            report("remove", path, "removed file created by interrupted transaction")
+            return
+
+        verified = verified_restore_source(path, before, backup_str)
+        if verified is None:
+            return
+        backup_path, raw = verified
+        if execute:
+            try:
+                atomic_write_text(path, raw.decode("utf-8"))
+            except OSError as exc:
+                blocker(f"回滚失败 {path}: {exc}")
+                return
+        remember_state(path, before, present=True, raw=raw)
+        report("restore", path, f"restored prior content from {backup_path.name}")
 
     steps = list(record.get("steps", []))
     for step in reversed(steps):
@@ -1240,17 +1387,41 @@ def rollback_pending_journal(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any
             for source_str, backup_str in reversed(step.get("moved", [])):
                 source = Path(source_str)
                 backup = Path(backup_str)
-                if source.exists():
+                source_present = current_present(source)
+                if source_present is None:
+                    continue
+                if source_present:
                     blocker(f"回滚目标已存在，拒绝覆盖: {source}")
                     continue
-                if not backup.exists():
+                backup_present = current_present(backup)
+                if backup_present is None:
+                    continue
+                if not backup_present:
                     blocker(f"迁移备份缺失，无法回滚: {backup}")
                     continue
+                backup_evidence = current_evidence(backup)
                 try:
-                    os.replace(str(backup), str(source))
-                    report("restore-moved", source, f"restored from {backup.name}")
-                except OSError as exc:
-                    blocker(f"迁移回滚失败 {source}: {exc}")
+                    backup_raw = read_current_bytes(backup)
+                except OSError:
+                    backup_raw = None
+                if execute:
+                    try:
+                        os.replace(str(backup), str(source))
+                    except OSError as exc:
+                        blocker(f"迁移回滚失败 {source}: {exc}")
+                        continue
+                remember_state(
+                    source,
+                    backup_evidence,
+                    present=True,
+                    raw=backup_raw,
+                )
+                remember_state(
+                    backup,
+                    {"sha256": None, "size_bytes": None, "exists": False},
+                    present=False,
+                )
+                report("restore-moved", source, f"restored from {backup.name}")
             continue
 
         path = Path(step.get("path", ""))
@@ -1259,77 +1430,47 @@ def rollback_pending_journal(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any
         if action == "backup":
             continue  # evidence only
 
-        current = file_evidence(path)
         backup_str = step.get("backup_path")
-
-        def restore_prior_state() -> None:
-            if not before.get("exists"):
-                try:
-                    path.unlink()
-                    report("remove", path, "removed file created by interrupted transaction")
-                except OSError as exc:
-                    blocker(f"无法移除事务新建文件 {path}: {exc}")
-                return
-            backup_path = Path(backup_str) if backup_str else None
-            if backup_path and backup_path.is_file() and file_evidence(backup_path).get("sha256") == before.get("sha256"):
-                try:
-                    atomic_write_text(path, backup_path.read_text(encoding="utf-8"))
-                    report("restore", path, f"restored prior content from {backup_path.name}")
-                except (OSError, UnicodeDecodeError) as exc:
-                    blocker(f"回滚失败 {path}: {exc}")
-                return
-            expected_sha = before.get("sha256")
-            if expected_sha is None:
-                blocker(f"缺少事务前指纹，无法确认回滚内容: {path}")
-                return
-            candidates = sorted(
-                path.parent.glob(f"{path.name}.bak_*"),
-                key=lambda item: item.name,
-                reverse=True,
-            )
-            verified = None
-            for candidate in candidates:
-                if file_evidence(candidate).get("sha256") == expected_sha:
-                    verified = candidate
-                    break
-            if verified is None:
-                blocker(f"找不到匹配事务前指纹的备份，回滚受阻: {path}")
-                return
-            try:
-                atomic_write_text(path, verified.read_text(encoding="utf-8"))
-                report("restore", path, f"restored prior content from {verified.name}")
-            except (OSError, UnicodeDecodeError) as exc:
-                blocker(f"回滚失败 {path}: {exc}")
 
         if action == "write":
             if not after:
                 # Crash before/during the write; treat as not yet applied when the
                 # file still matches the before state.
-                if current.get("sha256") == before.get("sha256"):
+                if matches_state(path, before):
                     continue
-                restore_prior_state()
+                restore_prior_state(path, before, backup_str)
                 continue
-            if current.get("sha256") == after.get("sha256"):
-                restore_prior_state()
+            if matches_state(path, after):
+                restore_prior_state(path, before, backup_str)
                 continue
-            if current.get("sha256") == before.get("sha256"):
+            if matches_state(path, before):
                 continue  # never applied, or already rolled back
             blocker(f"未知修改（事务后指纹不匹配），拒绝回滚: {path}")
         elif action == "remove":
             if not after:
-                if current.get("sha256") == before.get("sha256"):
+                if matches_state(path, before):
                     continue  # removal never happened
-                restore_prior_state()
+                restore_prior_state(path, before, backup_str)
                 continue
-            if current.get("exists"):
-                if current.get("sha256") == before.get("sha256"):
+            if current_present(path):
+                if matches_state(path, before):
                     continue  # already rolled back
                 blocker(f"文件被未知方重建，拒绝覆盖: {path}")
                 continue
-            restore_prior_state()
+            restore_prior_state(path, before, backup_str)
         else:
             blocker(f"未知事务步骤类型 {action!r}: {path}")
     return actions, blockers
+
+
+def rollback_pending_journal(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Roll back a pending (never-committed) journal to the prior state."""
+    return _pending_rollback_core(record, execute=True)
+
+
+def plan_pending_rollback(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Dry-run of :func:`rollback_pending_journal`; never mutates the filesystem."""
+    return _pending_rollback_core(record, execute=False)
 
 
 def finish_committed_journal(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -1473,13 +1614,42 @@ def _load_json_object(path: Path) -> Dict[str, Any]:
 
 
 def _runtime_recovery_marker_present(paths: ScopePaths) -> bool:
+    present, _settings_path, _settings, _blocker = _runtime_recovery_marker_status(paths)
+    return present
+
+
+def _runtime_recovery_marker_status(
+    paths: ScopePaths,
+) -> Tuple[bool, Path, Optional[Dict[str, Any]], Optional[str]]:
+    """Return marker presence and the exact alignment verdict used by recover."""
+    settings_path = resolve_home() / ".claude" / "settings.json"
     if paths.scope != "user":
-        return False
+        return False, settings_path, None, None
     try:
-        settings = load_settings(resolve_home() / ".claude" / "settings.json")
+        settings = load_settings(settings_path)
     except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return bool(settings.get(RECOVERY_MARKER_KEY))
+        return False, settings_path, None, None
+    if not settings.get(RECOVERY_MARKER_KEY):
+        return False, settings_path, settings, None
+
+    system_prompt = paths.keysmith_dir / "system-prompt.md"
+    try:
+        system_body = read_text_if_exists(system_prompt) if system_prompt.is_file() else ""
+    except (OSError, UnicodeDecodeError) as exc:
+        return (
+            True,
+            settings_path,
+            settings,
+            f"无法验证 settings.systemPrompt 恢复对齐状态: {exc}",
+        )
+    if system_body and settings.get("systemPrompt") == system_body:
+        return True, settings_path, settings, None
+    return (
+        True,
+        settings_path,
+        settings,
+        "settings.systemPrompt 与 system-prompt.md 不一致；请先用 backups 选择受控备份执行 restore，再运行 recover",
+    )
 
 
 def _blockers_for_recovery_residue(paths: ScopePaths, fresh_lock: Optional[ScopeWriteLock] = None) -> List[str]:
@@ -2575,9 +2745,9 @@ def command_recover(args) -> int:
             }
         )
 
-    settings_marker = _runtime_recovery_marker_present(paths)
+    settings_marker, settings_path, _settings, settings_marker_blocker = _runtime_recovery_marker_status(paths)
     if settings_marker:
-        residue.append({"kind": "settings_recovery_marker", "path": str(resolve_home() / ".claude" / "settings.json")})
+        residue.append({"kind": "settings_recovery_marker", "path": str(settings_path)})
     report["residue"] = residue
 
     # Stale-lock reporting/reclaim (never break a live lock).
@@ -2598,18 +2768,30 @@ def command_recover(args) -> int:
             stale_lock = True
             _add_action(report, "reclaim-lock", lock_path, "remove stale keysmith lock (dead pid)")
 
+    # Preview must reach the same verdict as execute: dry-run every journal so an
+    # unrecoverable plan blocks before the user confirms (never mutates state).
     planned_repairs: List[Dict[str, Any]] = []
     for journal_path, record in journal_records:
         if record.get("state") == "committed":
+            _plan, plan_blockers = finish_committed_journal(record)
             planned_repairs.append(
                 {"journal": str(journal_path), "action": "finalize-committed", "detail": "verify committed transaction and clean up journal"}
             )
         else:
+            _plan, plan_blockers = plan_pending_rollback(record)
             planned_repairs.append(
                 {"journal": str(journal_path), "action": "rollback-pending", "detail": "roll back interrupted transaction to prior state using verified backups"}
             )
+            planned_repairs.extend(_plan)
+        for plan_blocker in plan_blockers:
+            if plan_blocker not in report["blockers"]:
+                report["blockers"].append(plan_blocker)
     if settings_marker:
-        planned_repairs.append({"journal": None, "action": "clear-settings-marker", "detail": "clear pending systemPrompt recovery marker when aligned"})
+        if settings_marker_blocker:
+            if settings_marker_blocker not in report["blockers"]:
+                report["blockers"].append(settings_marker_blocker)
+        else:
+            planned_repairs.append({"journal": None, "action": "clear-settings-marker", "detail": "clear pending systemPrompt recovery marker after verified alignment"})
     report["planned_repairs"] = planned_repairs
 
     if not residue and not stale_lock and not report["blockers"]:
@@ -2684,21 +2866,16 @@ def command_recover(args) -> int:
                     print(f"[清理] {journal_path.name} 已完成并移除")
 
         if settings_marker and not report["blockers"]:
-            settings_path = resolve_home() / ".claude" / "settings.json"
-            settings = load_settings(settings_path)
-            system_prompt = settings_path.parent / "keysmith" / "system-prompt.md"
-            system_body = read_text_if_exists(system_prompt) if system_prompt.is_file() else ""
-            if system_body and settings.get("systemPrompt") == system_body:
+            marker_present, settings_path, settings, marker_blocker = _runtime_recovery_marker_status(paths)
+            if marker_blocker:
+                report["blockers"].append(marker_blocker)
+            elif marker_present and settings is not None:
                 updated = dict(settings)
                 updated.pop(RECOVERY_MARKER_KEY, None)
                 write_settings(settings_path, updated)
                 _add_action(report, "clear-settings-marker", settings_path, "systemPrompt aligned with system-prompt.md; recovery marker cleared")
                 if not use_json:
                     print("[恢复] settings.json 的待恢复标记已清除（systemPrompt 与 system-prompt.md 一致）")
-            else:
-                report["blockers"].append(
-                    "settings.systemPrompt 与 system-prompt.md 不一致；请先用 backups 选择受控备份执行 restore，再运行 recover"
-                )
     finally:
         lock.release()
 
@@ -2785,8 +2962,24 @@ def command_runtime_doctor(args) -> int:
     return 0
 
 
+# Set by _ContractArgumentParser.error so main() can echo the real reason in JSON.
+_LAST_USAGE_ERROR: List[Optional[str]] = [None]
+
+
+class _ContractArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that records its usage error before exiting.
+
+    Subparsers inherit this class, so ``--max-tokens`` and friends keep argparse's
+    normal behaviour while still letting ``--json`` callers receive the message.
+    """
+
+    def error(self, message: str) -> "None":  # noqa: D401 - argparse contract
+        _LAST_USAGE_ERROR[0] = message
+        super().error(message)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ContractArgumentParser(
         description="Claude Code instruction + runtime injector",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -2878,10 +3071,60 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _usage_error_mode(argv: List[str]) -> str:
+    """Infer preview/execute from raw argv when argparse could not build args."""
+    return "preview" if "--dry-run" in argv or "--yes" not in argv else "execute"
+
+
+def _emit_usage_error_as_contract(operation: str, message: str, mode: str) -> None:
+    """Render an argparse usage error as a contract document on stdout.
+
+    Callers that requested ``--json`` must never receive bare usage text; the GUI
+    would surface it as "CLI 未输出稳定 JSON" instead of the real reason.
+    """
+    print(
+        json.dumps(
+            {
+                "schema": JSON_SCHEMA,
+                "operation": operation,
+                "mode": mode,
+                "ok": False,
+                "error": message,
+                "blockers": [message],
+                "warnings": [],
+                "actions": [],
+                "backups": [],
+                "reload_required": False,
+                "reload_hint": None,
+                "exit_status": 2,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def main() -> int:
     configure_utf8_stdio()
     parser = build_parser()
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    if "--json" in argv:
+        # Keep the JSON contract intact for argument-validation failures too.
+        operation = next((item for item in argv if not item.startswith("-")), "unknown")
+        try:
+            args = parser.parse_args(argv)
+        except SystemExit as exit_request:
+            status = exit_request.code if isinstance(exit_request.code, int) else 2
+            if status == 0:
+                raise
+            _emit_usage_error_as_contract(
+                operation,
+                _LAST_USAGE_ERROR[0] or "参数校验失败",
+                _usage_error_mode(argv),
+            )
+            return status
+        return args.func(args)
+    args = parser.parse_args(argv)
     return args.func(args)
 
 

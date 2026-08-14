@@ -10,11 +10,13 @@ import {
   resetOperationCoordinatorForTests,
   setCliInfo,
   setView,
+  subscribe,
 } from "./store.js";
 
 afterEach(() => {
   resetOperationCoordinatorForTests();
   setView("dashboard");
+  vi.unstubAllGlobals();
 });
 
 describe("CLI 检测结果时序", () => {
@@ -150,6 +152,43 @@ describe("操作租约与关闭生命周期", () => {
 
     expect(exit).toHaveBeenCalledOnce();
     expect(beginExclusiveOperation()).toBeNull();
+  });
+
+  it("共享与独占租约在两个方向都互斥", () => {
+    const writer = beginExclusiveOperation();
+    expect(writer).not.toBeNull();
+    expect(beginOperation()).toBeNull();
+    expect(endOperation(writer)).toBe(true);
+
+    const reader = beginOperation();
+    expect(reader).not.toBeNull();
+    expect(beginExclusiveOperation()).toBeNull();
+    expect(endOperation(reader)).toBe(true);
+  });
+
+  it("订阅者异常会被报告且不会遗失操作租约", async () => {
+    const subscriberError = new Error("subscriber failed");
+    const reportError = vi.fn();
+    const healthySubscriber = vi.fn();
+    vi.stubGlobal("reportError", reportError);
+    const unsubscribeBroken = subscribe(() => { throw subscriberError; });
+    const unsubscribeHealthy = subscribe(healthySubscriber);
+
+    const lease = beginOperation();
+    expect(lease).not.toBeNull();
+    expect(getState().operationCount).toBe(1);
+    expect(healthySubscriber).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(reportError).toHaveBeenCalledWith(subscriberError);
+
+    expect(endOperation(lease)).toBe(true);
+    expect(getState().operationCount).toBe(0);
+    expect(getState().operationInProgress).toBe(false);
+    await Promise.resolve();
+    expect(reportError).toHaveBeenCalledTimes(2);
+    expect(healthySubscriber).toHaveBeenCalledTimes(2);
+    unsubscribeBroken();
+    unsubscribeHealthy();
   });
 
   it("排队退出失败时保留请求，并在再次关闭时重试", async () => {

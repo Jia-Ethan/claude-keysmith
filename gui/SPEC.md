@@ -54,12 +54,13 @@ Rust 侧对 CLI 的全部责任：
 ### 5.2 API 封装（`src/lib/api.js`）
 
 - 每个 invoke 都包在操作租约里（`beginOperation` / `endOperation`）；退出排队中直接 reject。
+- 写操作的 execute 阶段走 `cliRunExclusive`（`beginExclusiveOperation`）；preview 与读操作走共享租约。
 - 所有业务调用带 `--json`；写操作成对出现：`previewX()`（无 `--yes`）→ `executeX()`（追加 `--yes`，120 s 超时）。
 - `resolveCli`：手动路径优先验证（version + runtime），否则走 Rust 侧 sidecar 优先探测。
 
 ### 5.3 状态与生命周期（`src/lib/store.js` + `windowLifecycle.js`）
 
-- **全局写互斥**：`beginExclusiveOperation` 原子获取；已有操作或退出排队时返回 `null`。
+- **全局写互斥**：`beginExclusiveOperation` 原子获取；已有操作或退出排队时返回 `null`。由 `api.js` 的 `cliRunExclusive` 在所有 `execute*` 写路径上实际持有（install / uninstall / restore / recover）；CLI 侧的 `.keysmith.lock` 是第二道跨进程门禁。
 - **操作租约**：UI 统一读 `operationInProgress` 作为交互锁；租约未清零拒绝视图切换。
 - **关闭屏障**：`onCloseRequested` → `requestExitWhenIdle`；有活动租约时排队（queued close），最后一个租约结束后销毁窗口（`destroy()` 失败回退 `close()`）；销毁期间屏障保持封闭，迟到的 sidecar 不会启动。**无托盘**——关闭即退出。
 - **单实例**：`tauri-plugin-single-instance`，二次启动 unminimize + show + focus 主窗口。
@@ -101,7 +102,8 @@ localStorage 单键 `claude-keysmith-gui:settings`：`cliPath`（留空 = 自动
 - **frozen 资源断言**：打包前检查 `claude-instruct.py` 含 `def _resource_base()` 且 frozen 时解析 `sys._MEIPASS`，缺失则拒绝打包。`examples/` 以 `--add-data` 进入 `sys._MEIPASS`，frozen 下由 `_resource_base()` 定位，无需源码补丁。
 - 构建环境净化：`PYTHONNOUSERSITE=1`，删除 `PYTHONHOME` / `PYTHONPATH` / `PYTHONUSERBASE`；`PYTHON` 环境变量指定解释器（需 `pip install -r requirements-build.txt`）。
 - 产物原子落位 `src-tauri/binaries/claude-keysmith-cli-<triple>[.exe]`（先复制到临时名再 rename，Unix 下 `chmod 755`），随后 `--version` smoke，失败即构建失败。
-- macOS 打包声明 `externalBin`（`tauri.macos.conf.json`：targets `app` + `dmg`）；Windows 声明 NSIS currentUser + WebView2 downloadBootstrapper（`tauri.windows.conf.json`）——Windows 产物状态为 PENDING 原生 runner 验收。
+- `npm run bundle` 是唯一打包入口：先构建 sidecar，再加载 `tauri.bundle.conf.json` 启用 bundle 并声明 `externalBin`。常驻配置 `bundle.active=false`，裸 `tauri build` 只产 executable；即使显式传 `--bundles`，默认 `beforeBundleCommand` 也会拒绝。overlay 覆盖该 hook 后仍按 `TAURI_ENV_TARGET_TRIPLE` 校验目标 sidecar 存在且可执行。
+- macOS 目标由 `tauri.macos.conf.json` 声明 `app` + `dmg`；Windows 由 `tauri.windows.conf.json` 声明 NSIS currentUser + WebView2 downloadBootstrapper——Windows 产物状态为 PENDING 原生 runner 验收。
 
 ## 9. 不变量（改动必须保持）
 

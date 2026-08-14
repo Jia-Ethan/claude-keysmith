@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args) => invokeMock(...args) }));
@@ -25,6 +25,10 @@ beforeEach(async () => {
   store = await import("./store.js");
   store.resetOperationCoordinatorForTests();
   api = await import("./api.js");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 const { SCHEMA } = await import("./parser.js");
@@ -78,6 +82,27 @@ describe("cliRun", () => {
     expect(store.getState().operationInProgress).toBe(true);
     release({ stdout: "{}", stderr: "", exit_code: 0, timed_out: false });
     await pending;
+    expect(store.getState().operationInProgress).toBe(false);
+  });
+
+  it("releases the lease even when a store subscriber throws", async () => {
+    let release;
+    const subscriberError = new Error("subscriber failed");
+    const reportError = vi.fn();
+    vi.stubGlobal("reportError", reportError);
+    invokeMock.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const unsubscribe = store.subscribe(() => { throw subscriberError; });
+
+    const pending = api.cliRun(["doctor", "--json"]);
+    expect(store.getState().operationCount).toBe(1);
+    expect(pending).toBeInstanceOf(Promise);
+    unsubscribe();
+    release({ stdout: "{}", stderr: "", exit_code: 0, timed_out: false });
+    await pending;
+    await Promise.resolve();
+
+    expect(reportError).toHaveBeenCalledWith(subscriberError);
+    expect(store.getState().operationCount).toBe(0);
     expect(store.getState().operationInProgress).toBe(false);
   });
 });
@@ -150,6 +175,110 @@ describe("preview/execute install", () => {
     const report = await api.previewInstall({ scope: "project", projectDir: "/nope" });
     expect(report.gate.ok).toBe(false);
     expect(report.blockers).toEqual(["no dir"]);
+  });
+});
+
+describe("global write mutex", () => {
+  const okDoc = {
+    schema: SCHEMA,
+    operation: "install",
+    mode: "execute",
+    ok: true,
+    exit_status: 0,
+    actions: [],
+    warnings: [],
+    blockers: [],
+    backups: [],
+  };
+
+  it("execute writes take the exclusive lease and reject concurrent writes", async () => {
+    let releaseFirst;
+    invokeMock.mockImplementation(
+      () => new Promise((resolve) => {
+        releaseFirst = () => resolve({ stdout: JSON.stringify(okDoc), stderr: "", exit_code: 0, timed_out: false });
+      }),
+    );
+
+    const first = api.executeInstall({ scope: "user", name: "n" });
+    await expect(api.executeUninstall({ scope: "user", name: "n" })).rejects.toThrow(
+      /Another operation is in progress/,
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    await first;
+
+    // Lease released: a subsequent write is allowed again.
+    invokeMock.mockResolvedValue({ stdout: JSON.stringify(okDoc), stderr: "", exit_code: 0, timed_out: false });
+    await expect(api.executeRecover({ scope: "user" })).resolves.toBeTruthy();
+  });
+
+  it("releases an exclusive lease when backend invocation throws synchronously", async () => {
+    invokeMock.mockImplementation(() => { throw new Error("invoke failed"); });
+
+    expect(() => api.executeInstall({ scope: "user", name: "n" })).toThrow("invoke failed");
+    expect(store.getState().operationCount).toBe(0);
+    expect(store.getState().operationInProgress).toBe(false);
+
+    invokeMock.mockResolvedValue({
+      stdout: JSON.stringify(okDoc),
+      stderr: "",
+      exit_code: 0,
+      timed_out: false,
+    });
+    await expect(api.executeInstall({ scope: "user", name: "n" })).resolves.toBeTruthy();
+  });
+
+  it("a running write blocks every other execute entry point", async () => {
+    invokeMock.mockImplementation(() => new Promise(() => {}));
+    api.executeInstall({ scope: "user", name: "n" });
+
+    await expect(api.executeRestore({ target: "/t", backup: "/b" })).rejects.toThrow(
+      /Another operation is in progress/,
+    );
+    await expect(api.executeRecover({ scope: "user" })).rejects.toThrow(
+      /Another operation is in progress/,
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preview and read operations stay on the shared lease", async () => {
+    invokeMock.mockImplementation(() => new Promise(() => {}));
+    api.previewInstall({ scope: "user", name: "n" });
+
+    // Concurrent preview/read must not be rejected by the write mutex.
+    api.previewUninstall({ scope: "user", name: "n" });
+    api.fetchStatus({ scope: "user" });
+    expect(invokeMock).toHaveBeenCalledTimes(3);
+
+    // ...but a write must wait for them.
+    await expect(api.executeInstall({ scope: "user", name: "n" })).rejects.toThrow(
+      /Another operation is in progress/,
+    );
+  });
+
+  it("a running write rejects later preview and read operations", async () => {
+    let releaseWrite;
+    invokeMock.mockImplementation(
+      () => new Promise((resolve) => {
+        releaseWrite = () => resolve({
+          stdout: JSON.stringify(okDoc),
+          stderr: "",
+          exit_code: 0,
+          timed_out: false,
+        });
+      }),
+    );
+
+    const write = api.executeInstall({ scope: "user", name: "n" });
+    await expect(api.previewUninstall({ scope: "user", name: "n" })).rejects.toThrow();
+    await expect(api.fetchStatus({ scope: "user" })).rejects.toThrow();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().operationCount).toBe(1);
+
+    releaseWrite();
+    await write;
+    expect(store.getState().operationCount).toBe(0);
   });
 });
 

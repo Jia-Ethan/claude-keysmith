@@ -115,8 +115,15 @@ async fn run_invocation(
             )
         })?;
 
-    let stdout_reader = child.stdout.take().expect("stdout pipe");
-    let stderr_reader = child.stderr.take().expect("stderr pipe");
+    // Both pipes were requested above; fail closed instead of panicking if the
+    // platform ever hands back a child without them.
+    let (stdout_reader, stderr_reader) = match (child.stdout.take(), child.stderr.take()) {
+        (Some(stdout_reader), Some(stderr_reader)) => (stdout_reader, stderr_reader),
+        _ => {
+            terminate_process_tree(&mut child).await;
+            return Err("无法捕获 CLI 输出管道，已终止子进程".to_string());
+        }
+    };
     let read_task = tokio::spawn(async move {
         tokio::join!(read_capped(stdout_reader), read_capped(stderr_reader))
     });

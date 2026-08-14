@@ -1,6 +1,5 @@
 {
   "bundle": {
-    "targets": ["app", "dmg"],
-    "externalBin": ["binaries/claude-keysmith-cli"]
+    "targets": ["app", "dmg"]
   }
 }

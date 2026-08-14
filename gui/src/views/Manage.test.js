@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseBackupsReport, buildRestoreArgs } from "@/lib/parser";
+import { canStartManageLoad, isManageControlLocked } from "./Manage";
 
 /**
  * Manage 页核心不变量：
@@ -70,5 +71,36 @@ describe("managed-backup restore contract", () => {
     const evil = buildRestoreArgs({ target: "a; rm -rf ~", backup: "/b/x.bak_1", scope: "user" });
     expect(evil[2]).toBe("a; rm -rf ~");
     expect(evil).not.toContain("--yes");
+  });
+});
+
+describe("manage operation gating", () => {
+  const readyTarget = {
+    cliPath: "/app/claude-keysmith-cli",
+    scope: "project",
+    projectDir: "/project",
+    busy: false,
+    operationInProgress: false,
+    loadInFlight: false,
+  };
+
+  it("locks target and refresh controls for local or global activity", () => {
+    expect(isManageControlLocked({ busy: true, operationInProgress: false })).toBe(true);
+    expect(isManageControlLocked({ busy: false, operationInProgress: true })).toBe(true);
+    expect(isManageControlLocked({ busy: false, operationInProgress: false, loading: true })).toBe(true);
+    expect(isManageControlLocked({ busy: false, operationInProgress: false })).toBe(false);
+  });
+
+  it("does not start background reads while busy, leased, or already loading", () => {
+    expect(canStartManageLoad({ ...readyTarget, busy: true })).toBe(false);
+    expect(canStartManageLoad({ ...readyTarget, operationInProgress: true })).toBe(false);
+    expect(canStartManageLoad({ ...readyTarget, loadInFlight: true })).toBe(false);
+    expect(canStartManageLoad(readyTarget)).toBe(true);
+  });
+
+  it("requires a resolved CLI and a complete non-user target", () => {
+    expect(canStartManageLoad({ ...readyTarget, cliPath: null })).toBe(false);
+    expect(canStartManageLoad({ ...readyTarget, projectDir: "   " })).toBe(false);
+    expect(canStartManageLoad({ ...readyTarget, scope: "user", projectDir: "" })).toBe(true);
   });
 });

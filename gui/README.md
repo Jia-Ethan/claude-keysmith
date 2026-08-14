@@ -16,6 +16,7 @@ npm run dev         # vite dev server (Tauri: npm run tauri dev)
 ```bash
 npm run build                          # vite production build
 npm run build:sidecar                  # PyInstaller onefile CLI sidecar (native only)
+npm run bundle                         # canonical distributable build (sidecar first)
 cd src-tauri && cargo fmt --check && cargo check --locked && cargo test --locked
 ```
 
@@ -25,7 +26,11 @@ cd src-tauri && cargo fmt --check && cargo check --locked && cargo test --locked
 - `scripts/build-sidecar.mjs` bundles `../claude-instruct.py` plus `../examples/`
   (frozen resources resolve via `sys._MEIPASS`, see `_resource_base()` in the
   CLI). Set `PYTHON` to an environment with `pip install -r requirements-build.txt`.
-- Packaging (`npm run bundle` / `tauri build`) is handled outside this worktree.
+- `npm run bundle` is the only supported distributable-build entry point. The
+  base config keeps direct `tauri build` executable-only, and its bundle hook
+  rejects an explicit `--bundles` override; the packaging overlay enables
+  bundles only after the target sidecar exists. Packaging is handled outside
+  this worktree.
 
 ## Architecture
 

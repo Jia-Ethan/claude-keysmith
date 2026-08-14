@@ -7,9 +7,11 @@
 
 | 平台 | 产物 | 配置 | 状态 |
 |---|---|---|---|
-| macOS Apple Silicon（`aarch64-apple-darwin`） | `.app` + `.dmg`（`tauri.macos.conf.json`，`externalBin: binaries/claude-keysmith-cli`） | 就绪 | 本机可构建；实体机验收见 [`beta-acceptance.md`](beta-acceptance.md) |
-| Windows x64（`x86_64-pc-windows-msvc`） | NSIS 安装器，currentUser 安装（无需管理员），WebView2 `downloadBootstrapper`（silent），`allowDowngrades: false`（`tauri.windows.conf.json`） | 就绪 | **PENDING**：需要原生 Windows runner 构建 + 实体机/CI 验收，未通过前不得发布 |
+| macOS Apple Silicon（`aarch64-apple-darwin`） | `.app` + `.dmg` | `tauri.macos.conf.json`（targets）+ `tauri.bundle.conf.json`（`externalBin`） | 就绪；本机可构建，实体机验收见 [`beta-acceptance.md`](beta-acceptance.md) |
+| Windows x64（`x86_64-pc-windows-msvc`） | NSIS currentUser 安装器，WebView2 `downloadBootstrapper`（silent） | `tauri.windows.conf.json`（`allowDowngrades: false`）+ `tauri.bundle.conf.json`（`externalBin`） | **PENDING**：需要原生 Windows runner 构建 + 实体机/CI 验收，未通过前不得发布 |
 | Linux | 无 GUI 产物 | 无 | 不支持（CLI 继续支持） |
+
+两种受支持平台都只用 `cd gui && npm run bundle` 生成发行产物。该入口先原生构建 sidecar，再加载打包 overlay 启用 bundle 和 `externalBin`；裸 Tauri 构建不是发行打包入口。
 
 ## 明确的后续门槛（follow-up gates）
 

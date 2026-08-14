@@ -85,6 +85,8 @@ python3 claude-instruct.py recover --scope user --json
 python3 claude-instruct.py recover --scope user --yes --json
 ```
 
+预览阶段与执行阶段同源判定：`plan_pending_rollback` 与 `rollback_pending_journal` 调用同一回滚核心；预览只读取当前指纹与备份证据，不执行写入、删除或重命名，并把具体修复步骤展开到 `planned_repairs`。任何不可恢复的情形（未知修改、找不到匹配指纹的备份、回滚目标被重建）在预览就以 blocker 呈现，`ok: false` / `exit_status: 1`。因此 GUI 的 preview → confirm → execute 不会出现“预览说能修、确认后才失败”。
+
 执行阶段行为：
 
 1. 失效锁：报告 `reclaim-lock` 动作，由随后的 `ScopeWriteLock` 获取自然回收；活跃锁 ⇒ blocker，拒绝在写入进行中恢复。
@@ -92,6 +94,12 @@ python3 claude-instruct.py recover --scope user --yes --json
 3. committed journal ⇒ 核验残留，干净则删除 journal。
 4. settings 恢复标记存在且没有其它 blocker ⇒ 校验 `settings.systemPrompt` 与 `~/.claude/keysmith/system-prompt.md` 一致后清除标记；不一致 ⇒ blocker，提示先用 `backups` 选受控备份执行 `restore` 再运行 `recover`。
 5. 任一 journal 有 blocker ⇒ 该 journal 与证据保留，整体 `ok: false`、`exit_status: 1`。
+
+## 受控与非受控 `restore` 的事务边界
+
+`restore` 只在备份通过受控判定（`is_keysmith_backup_for_target`：同目录 + `<target>.bak_YYYYMMDD_HHMMSS…` 命名）且能推断出所属 scope 时，才走 journal + 写锁事务（`managed: true`）。
+
+任意路径的备份（`managed: false`）仍然会先为当前目标生成 `*_pre_restore` 安全备份，但**不建 journal、不取 scope 锁**——因为目标不属于任何 keysmith scope，无法定位事务目录。它不参与失败关闭门禁，也不会被 `recover` 回滚。GUI 只从 `backups --json` 枚举的受控备份发起恢复，不暴露非受控路径。
 
 ## runtime uninstall 与 settings 语义
 
