@@ -1,0 +1,232 @@
+# 桌面 GUI 发布候选构建：只产出候选产物（artifact），不打 tag、不创建
+# Release、不使用发布权限或 secrets。手动触发，避免每次 push 消耗
+# Windows / macOS runner。
+#
+# 产物均为未签名 beta：无 Authenticode、无 notarization、无自动更新。
+# PyInstaller sidecar 必须原生构建（build-sidecar.mjs 强制 host 校验）；
+# macOS job 依赖 GitHub 托管 macos-latest 为 arm64 镜像（macos-26-arm64，
+# 已在本仓库 CI 日志核实），并在构建前显式断言，不匹配立即失败。
+name: gui-release-candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.14"
+  NODE_VERSION: "22"
+
+jobs:
+  windows-x64:
+    name: Windows x64 NSIS candidate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: CLI gate (py_compile + pytest)
+        shell: pwsh
+        run: |
+          python -m pip install "pytest>=7.4,<10"
+          python -m py_compile claude-instruct.py
+          python -m pytest -q tests
+
+      - name: Install sidecar build requirements
+        shell: pwsh
+        run: python -m pip install -r gui/requirements-build.txt
+
+      - name: Frontend gate (npm ci + vitest)
+        shell: pwsh
+        working-directory: gui
+        run: |
+          npm ci
+          npm test
+
+      - name: Rust gate (fmt + check + test)
+        shell: pwsh
+        working-directory: gui/src-tauri
+        run: |
+          cargo fmt --check
+          cargo check --locked
+          cargo test --locked
+
+      - name: Build NSIS bundle (native sidecar + installer)
+        shell: pwsh
+        working-directory: gui
+        run: npm run bundle
+
+      - name: Collect candidate artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'candidate'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $sidecar = 'gui/src-tauri/binaries/claude-keysmith-cli-x86_64-pc-windows-msvc.exe'
+          if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw "sidecar missing: $sidecar" }
+
+          $nsisDir = 'gui/src-tauri/target/release/bundle/nsis'
+          $installer = Get-ChildItem -LiteralPath $nsisDir -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer missing under $nsisDir" }
+
+          $guiVersion = (Get-Content gui/package.json -Raw | ConvertFrom-Json).version
+          $cliVersion = (& $sidecar --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $cliVersion) { throw 'sidecar --version smoke failed' }
+
+          Copy-Item -LiteralPath $installer.FullName -Destination $stage
+          Copy-Item -LiteralPath $sidecar -Destination $stage
+
+          $files = Get-ChildItem -LiteralPath $stage -File
+          $entries = @()
+          $sums = @()
+          foreach ($f in $files) {
+            $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $entries += [ordered]@{ name = $f.Name; bytes = $f.Length; sha256 = $hash }
+            $sums += "$hash  $($f.Name)"
+          }
+
+          $buildInfo = [ordered]@{
+            gui_version    = $guiVersion
+            cli_version    = $cliVersion
+            source_commit  = $env:GITHUB_SHA
+            target         = 'x86_64-pc-windows-msvc'
+            runner_os      = $env:RUNNER_OS
+            runner_image   = $env:ImageOS
+            workflow_run   = $env:GITHUB_RUN_ID
+            signed         = $false
+            channel        = 'beta'
+            artifacts      = $entries
+          }
+          $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'BUILD_INFO.json') -Encoding UTF8
+          $sums -join "`n" | Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS') -Encoding Ascii
+
+          Get-Content (Join-Path $stage 'BUILD_INFO.json')
+          Get-Content (Join-Path $stage 'SHA256SUMS')
+          "STAGE_DIR=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
+
+      - name: Upload Windows candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-keysmith-gui-candidate-windows-x64-${{ github.sha }}
+          path: ${{ env.STAGE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-arm64:
+    name: macOS ARM64 candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert native arm64 runner
+        run: |
+          arch="$(uname -m)"
+          if [ "$arch" != "arm64" ]; then
+            echo "macos-latest runner is $arch, not arm64; refusing to build a wrong-arch candidate" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: CLI gate (py_compile + pytest)
+        run: |
+          python -m pip install "pytest>=7.4,<10"
+          python -m py_compile claude-instruct.py
+          python -m pytest -q tests
+
+      - name: Install sidecar build requirements
+        run: python -m pip install -r gui/requirements-build.txt
+
+      - name: Frontend gate (npm ci + vitest)
+        working-directory: gui
+        run: |
+          npm ci
+          npm test
+
+      - name: Rust gate (fmt + check + test)
+        working-directory: gui/src-tauri
+        run: |
+          cargo fmt --check
+          cargo check --locked
+          cargo test --locked
+
+      - name: Build DMG bundle (native sidecar + app)
+        working-directory: gui
+        run: npm run bundle
+
+      - name: Collect candidate artifacts
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/candidate"
+          mkdir -p "$stage"
+
+          sidecar="gui/src-tauri/binaries/claude-keysmith-cli-aarch64-apple-darwin"
+          [ -f "$sidecar" ] || { echo "sidecar missing: $sidecar" >&2; exit 1; }
+
+          dmg="$(find gui/src-tauri/target/release/bundle/dmg -name '*.dmg' -type f | head -1)"
+          [ -n "$dmg" ] || { echo "DMG missing" >&2; exit 1; }
+          hdiutil verify "$dmg"
+
+          gui_version="$(node -p "require('./gui/package.json').version")"
+          cli_version="$("$sidecar" --version)"
+
+          cp "$dmg" "$stage/"
+          cp "$sidecar" "$stage/"
+
+          cd "$stage"
+          shasum -a 256 ./* > SHA256SUMS
+          sed -i '' 's|\./||' SHA256SUMS
+
+          {
+            echo "{"
+            echo "  \"gui_version\": \"$gui_version\","
+            echo "  \"cli_version\": \"$cli_version\","
+            echo "  \"source_commit\": \"$GITHUB_SHA\","
+            echo "  \"target\": \"aarch64-apple-darwin\","
+            echo "  \"runner_os\": \"$RUNNER_OS\","
+            echo "  \"runner_arch\": \"$(uname -m)\","
+            echo "  \"workflow_run\": \"$GITHUB_RUN_ID\","
+            echo "  \"signed\": false,"
+            echo "  \"channel\": \"beta\","
+            echo "  \"artifacts\": ["
+            first=1
+            for f in *; do
+              [ "$f" = "SHA256SUMS" ] && continue
+              [ "$f" = "BUILD_INFO.json" ] && continue
+              hash="$(shasum -a 256 "$f" | cut -d' ' -f1)"
+              bytes="$(stat -f %z "$f")"
+              [ $first -eq 0 ] && echo ","
+              first=0
+              printf '    {"name": "%s", "bytes": %s, "sha256": "%s"}' "$f" "$bytes" "$hash"
+            done
+            echo ""
+            echo "  ]"
+            echo "}"
+          } > BUILD_INFO.json
+
+          cat BUILD_INFO.json
+          cat SHA256SUMS
+          echo "STAGE_DIR=$stage" >> "$GITHUB_ENV"
+
+      - name: Upload macOS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-keysmith-gui-candidate-macos-arm64-${{ github.sha }}
+          path: ${{ env.STAGE_DIR }}
+          if-no-files-found: error
+          retention-days: 14

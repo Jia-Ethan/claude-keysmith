@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+发布计划：本节内容将以同批次双 Release 发布——`v7`（正式，CLI）与 `desktop-v0.1.0-beta.1`（Pre-release，GUI beta），指向同一最终 main commit；草稿见 [`docs/release-notes-drafts.md`](docs/release-notes-drafts.md)，发布前置门槛见 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。
+
 ### JSON 契约、事务恢复层与桌面客户端 (beta)
 
 **`claude-keysmith/v1` JSON 契约：**
@@ -35,6 +37,12 @@
 - 进程边界：argv 数组调用（无 shell 拼接）、stdout/stderr 各 2 MiB 上限（截断失败关闭）、超时杀整棵进程树（unix 进程组 `kill(-pid)`；windows `taskkill /T /F`）、`kill_on_drop`。
 - 单实例、全局写互斥（操作租约；`execute*` 写路径经 `cliRunExclusive` 持有独占租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
 - 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 配置就绪但 **PENDING 原生 runner 验收**；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
+
+### 发布候选构建链
+
+- 新增手动触发的 `gui-release-candidate` workflow（`permissions: contents: read`，无 secrets）：Windows x64 与 macOS ARM64（已核实 GitHub 托管 `macos-latest` 为 arm64 镜像并在 job 内断言）先跑 CLI / 前端 / Rust 全部门禁，再原生构建 PyInstaller sidecar 与 NSIS / DMG 候选包，上传安装器、sidecar、`BUILD_INFO.json`（GUI 版本 / CLI 版本 / source commit / 字节数 / SHA-256 / signed:false）与 `SHA256SUMS` 为 artifact；不打 tag、不建 Release、不发布任何产物。
+- `docs/beta-acceptance.md` 重写为证据驱动清单：只勾选已取得命令级证据的条目（含失败关闭专项：强杀恢复链、committed 不反撤、活锁拒绝、预览纯只读、租约边界），Gatekeeper / Windows / UI 端到端等未取证据项保持 PENDING。
+- `docs/reference.md` 修正残留的 “v6 当前模板” 为 v7；新增 `docs/release-notes-drafts.md`（v7 与 desktop-v0.1.0-beta.1 同批次双 Release 草稿，未写发布日期）。
 
 ### Review 修复（本轮）
 
