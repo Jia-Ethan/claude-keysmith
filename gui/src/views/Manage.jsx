@@ -36,6 +36,28 @@ import { cn } from "@/lib/utils";
  * pending 流：{ kind: 'uninstall'|'recover'|'restore'|'repair', preview, execArgs }
  * 统一 preview → ConfirmDialog → execute。
  */
+export function isManageControlLocked({ busy, operationInProgress, loading = false }) {
+  return Boolean(busy || operationInProgress || loading);
+}
+
+export function canStartManageLoad({
+  cliPath,
+  scope,
+  projectDir,
+  busy,
+  operationInProgress,
+  loadInFlight,
+}) {
+  const targetReady = scope === "user" || Boolean(projectDir.trim());
+  return Boolean(
+    cliPath
+    && targetReady
+    && !busy
+    && !operationInProgress
+    && !loadInFlight,
+  );
+}
+
 export function Manage() {
   const { t } = useTranslation();
   const { cliInfo, operationInProgress } = useAppState();
@@ -47,32 +69,80 @@ export function Manage() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [doneReport, setDoneReport] = React.useState(null);
+  const busyRef = React.useRef(busy);
+  const operationInProgressRef = React.useRef(operationInProgress);
+  const loadInFlightRef = React.useRef(false);
+  const reloadAfterOperationRef = React.useRef(false);
+
+  busyRef.current = busy;
+  operationInProgressRef.current = operationInProgress;
+
+  const setBusyTracked = React.useCallback((next) => {
+    busyRef.current = next;
+    setBusy(next);
+  }, []);
 
   const target = { scope, projectDir: projectDir.trim() };
 
   const load = React.useCallback(async () => {
-    if (!cliInfo.path) return;
+    if (!cliInfo.path) return false;
     if (scope !== "user" && !projectDir.trim()) {
-      setState({ loading: false, status: null, backups: null, error: null });
-      return;
+      if (
+        !busyRef.current
+        && !operationInProgressRef.current
+        && !loadInFlightRef.current
+      ) {
+        setState({ loading: false, status: null, backups: null, error: null });
+      }
+      return false;
     }
+    if (!canStartManageLoad({
+      cliPath: cliInfo.path,
+      scope,
+      projectDir,
+      busy: busyRef.current,
+      operationInProgress: operationInProgressRef.current,
+      loadInFlight: loadInFlightRef.current,
+    })) {
+      return false;
+    }
+    loadInFlightRef.current = true;
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
-      const status = await fetchStatus({ ...target, runtime: scope === "user" });
-      const backups = await fetchBackups(target).catch(() => null);
+      // Acquire both shared reads together so a writer cannot slip in between them.
+      const [status, backups] = await Promise.all([
+        fetchStatus({ ...target, runtime: scope === "user" }),
+        fetchBackups(target).catch(() => null),
+      ]);
       setState({ loading: false, status, backups, error: null });
+      return true;
     } catch (error) {
       setState({ loading: false, status: null, backups: null, error: error?.message || String(error) });
+      return false;
+    } finally {
+      loadInFlightRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cliInfo.path, scope, projectDir]);
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => { void load(); }, [load]);
+
+  React.useEffect(() => {
+    if (
+      !reloadAfterOperationRef.current
+      || busy
+      || operationInProgress
+    ) {
+      return;
+    }
+    reloadAfterOperationRef.current = false;
+    void load();
+  }, [busy, operationInProgress, load]);
 
   const recoveryRequired = Boolean(state.status?.recovery.recoveryRequired);
 
   const startPreview = async (kind, options) => {
-    setBusy(true);
+    setBusyTracked(true);
     setDoneReport(null);
     try {
       let preview;
@@ -85,14 +155,15 @@ export function Manage() {
     } catch (error) {
       toast.error(error?.message || String(error));
     } finally {
-      setBusy(false);
+      setBusyTracked(false);
     }
   };
 
   const runExecute = async () => {
     if (!pending) return;
     setConfirmOpen(false);
-    setBusy(true);
+    setBusyTracked(true);
+    let shouldReload = false;
     try {
       let report;
       if (pending.kind === "uninstall") report = await executeUninstall(pending.options);
@@ -103,11 +174,12 @@ export function Manage() {
       if (report.gate.ok) toast.success(t(`manage.${pending.kind === "repair" ? "recoverSuccess" : `${pending.kind}Success`}`));
       else toast.error(report.error || report.blockers.join("; "));
       setPending(null);
-      load();
+      shouldReload = true;
     } catch (error) {
       toast.error(error?.message || String(error));
     } finally {
-      setBusy(false);
+      reloadAfterOperationRef.current = shouldReload;
+      setBusyTracked(false);
     }
   };
 
@@ -117,6 +189,11 @@ export function Manage() {
     restore: "manage.restoreConfirm",
     repair: "manage.runtimeRepairPreview",
   }[pending?.kind ?? "uninstall"];
+  const controlsLocked = isManageControlLocked({
+    busy,
+    operationInProgress,
+    loading: state.loading,
+  });
 
   if (cliInfo.checked && !cliInfo.path) {
     return (
@@ -140,7 +217,13 @@ export function Manage() {
         <section className="card-glass mt-5 flex flex-wrap items-end gap-3 p-5">
           <div>
             <label htmlFor="manage-scope" className="text-sm font-medium">{t("manage.scope")}</label>
-            <Select value={scope} onValueChange={setScope}>
+            <Select
+              value={scope}
+              disabled={controlsLocked}
+              onValueChange={(nextScope) => {
+                if (!controlsLocked) setScope(nextScope);
+              }}
+            >
               <SelectTrigger id="manage-scope" className="mt-1.5 w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="user">{t("common.scopeUser")}</SelectItem>
@@ -154,15 +237,26 @@ export function Manage() {
               <label htmlFor="manage-dir" className="text-sm font-medium">{t("manage.projectDir")}</label>
               <div className="mt-1.5 flex gap-2">
                 <Input id="manage-dir" className="flex-1 font-mono text-xs" value={projectDir}
-                  onChange={(e) => setProjectDir(e.target.value)} />
-                <Button variant="outline" onClick={async () => {
+                  disabled={controlsLocked}
+                  onChange={(e) => {
+                    if (!controlsLocked) setProjectDir(e.target.value);
+                  }} />
+                <Button variant="outline" disabled={controlsLocked} onClick={async () => {
                   const picked = await open({ directory: true });
-                  if (picked) setProjectDir(picked);
+                  if (
+                    picked
+                    && !busyRef.current
+                    && !operationInProgressRef.current
+                    && !loadInFlightRef.current
+                  ) {
+                    setProjectDir(picked);
+                  }
                 }}>{t("deploy.browse")}</Button>
               </div>
             </div>
           )}
-          <Button variant="outline" size="sm" onClick={load} disabled={busy || state.loading || !cliInfo.path}>
+          <Button variant="outline" size="sm" onClick={() => { void load(); }}
+            disabled={controlsLocked || !cliInfo.path}>
             {state.loading ? t("common.loading") : t("common.refresh")}
           </Button>
         </section>
@@ -208,7 +302,10 @@ export function Manage() {
             {scope === "user" && (
               <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-secondary-foreground">
                 <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={includeRuntime}
-                  onChange={(e) => setIncludeRuntime(e.target.checked)} />
+                  disabled={controlsLocked}
+                  onChange={(e) => {
+                    if (!controlsLocked) setIncludeRuntime(e.target.checked);
+                  }} />
                 {t("manage.uninstallRuntime")}
               </label>
             )}

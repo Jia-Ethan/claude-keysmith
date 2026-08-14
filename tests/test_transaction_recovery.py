@@ -41,6 +41,24 @@ def run_cli(args, *, home, cwd=None, check=True, extra_env=None):
     )
 
 
+def snapshot_tree(root):
+    """Capture file contents and write-relevant metadata for preview checks."""
+    if not root.exists():
+        return {}
+    snapshot = {}
+    for path in [root, *sorted(root.rglob("*"))]:
+        relative = "." if path == root else str(path.relative_to(root))
+        stat = path.lstat()
+        if path.is_symlink():
+            value = ("symlink", os.readlink(path))
+        elif path.is_file():
+            value = ("file", path.read_bytes())
+        else:
+            value = ("dir", None)
+        snapshot[relative] = (value, stat.st_mode, stat.st_mtime_ns)
+    return snapshot
+
+
 def make_args(command, scope="user", yes=False, json_mode=False, name="rules", project_dir=None):
     parser = claude_instruct.build_parser()
     argv = [command, "--scope", scope, "--name", name]
@@ -314,17 +332,221 @@ def test_recover_fail_closed_on_unknown_modification(tmp_path, monkeypatch):
     journal = claude_instruct.TransactionJournal(paths, "install")
     journal.log_step({"action": "write", "path": str(memory), "before": before, "after": after})
 
-    preview = run_cli(["recover", "--scope", "user", "--json"], home=home)
-    assert json.loads(preview.stdout)["residue"]
+    # Preview must reach the same verdict as execute (no "preview says OK,
+    # execute then fails" gap for the GUI confirm step).
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home, check=False)
+    preview_payload = json.loads(preview.stdout)
+    assert preview_payload["residue"]
+    assert preview.returncode == 1
+    assert preview_payload["ok"] is False
+    assert preview_payload["blockers"]
+    assert preview_payload["exit_status"] == 1
 
     execute = run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home, check=False)
     payload = json.loads(execute.stdout)
     assert execute.returncode == 1
     assert payload["ok"] is False
     assert payload["blockers"]
+    # Preview and execute agree on the reason.
+    assert preview_payload["blockers"] == payload["blockers"]
     # User file + evidence preserved.
     assert memory.read_text(encoding="utf-8") == "third-party edit\n"
     assert journal.path.exists()
+
+
+def test_pending_rollback_fails_closed_when_presence_check_errors(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    memory = paths.memory_file
+    memory.parent.mkdir(parents=True)
+    memory.write_text("interrupted\n", encoding="utf-8")
+    record = {
+        "steps": [
+            {
+                "action": "write",
+                "path": str(memory),
+                "before": {"sha256": None, "size_bytes": None, "exists": False},
+                "after": claude_instruct.file_evidence(memory),
+            }
+        ]
+    }
+
+    original_lexists = os.path.lexists
+
+    def fail_target_presence(path):
+        if Path(path) == memory:
+            raise PermissionError("simulated lstat denial")
+        return original_lexists(path)
+
+    monkeypatch.setattr(os.path, "lexists", fail_target_presence)
+
+    _planned, plan_blockers = claude_instruct.plan_pending_rollback(record)
+    _actions, execute_blockers = claude_instruct.rollback_pending_journal(record)
+
+    assert any("无法检查回滚目标状态" in item for item in plan_blockers)
+    assert execute_blockers == plan_blockers
+    assert memory.read_text(encoding="utf-8") == "interrupted\n"
+
+
+def test_recover_preview_plans_recoverable_rollback(tmp_path, monkeypatch):
+    """A recoverable pending journal previews concrete steps and stays ok."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    memory = paths.memory_file
+    memory.parent.mkdir(parents=True)
+    absent_before = {"sha256": None, "size_bytes": None, "exists": False}
+    memory.write_text("created by interrupted transaction\n", encoding="utf-8")
+    after = claude_instruct.file_evidence(memory)
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    journal.log_step({"action": "write", "path": str(memory), "before": absent_before, "after": after})
+
+    preview_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--json"], home=home).stdout
+    )
+    assert preview_payload["ok"] is True
+    assert preview_payload["blockers"] == []
+    planned = [item["action"] for item in preview_payload["planned_repairs"]]
+    assert "rollback-pending" in planned
+    assert "remove" in planned  # concrete step surfaced before confirmation
+    # Preview must not touch the filesystem.
+    assert memory.exists()
+    assert journal.path.exists()
+
+    execute_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home).stdout
+    )
+    assert execute_payload["ok"] is True
+    assert not memory.exists()  # rolled back exactly as planned
+    assert not journal.path.exists()
+
+
+def test_recover_repeated_writes_use_virtual_reverse_state(tmp_path, monkeypatch):
+    """Preview and execute both unwind multiple writes to one path in reverse."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    memory = paths.memory_file
+    memory.parent.mkdir(parents=True)
+    memory.write_text("state-a\n", encoding="utf-8")
+    before_a = claude_instruct.file_evidence(memory)
+    backup_a = claude_instruct.backup_file(memory, "20260814_120000", suffix="state_a")
+
+    journal = claude_instruct.TransactionJournal(paths, "restore")
+    memory.write_text("state-b\n", encoding="utf-8")
+    state_b = claude_instruct.file_evidence(memory)
+    journal.log_step(
+        {
+            "action": "write",
+            "path": str(memory),
+            "before": before_a,
+            "after": state_b,
+            "backup_path": str(backup_a),
+        }
+    )
+    backup_b = claude_instruct.backup_file(memory, "20260814_120001", suffix="state_b")
+    memory.write_text("state-c\n", encoding="utf-8")
+    state_c = claude_instruct.file_evidence(memory)
+    journal.log_step(
+        {
+            "action": "write",
+            "path": str(memory),
+            "before": state_b,
+            "after": state_c,
+            "backup_path": str(backup_b),
+        }
+    )
+
+    before_preview = snapshot_tree(home)
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home)
+    preview_payload = json.loads(preview.stdout)
+    assert preview_payload["ok"] is True
+    assert preview_payload["blockers"] == []
+    assert [item["action"] for item in preview_payload["planned_repairs"]].count("restore") == 2
+    assert snapshot_tree(home) == before_preview
+
+    execute = run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home)
+    execute_payload = json.loads(execute.stdout)
+    assert execute_payload["ok"] is True
+    assert execute_payload["blockers"] == []
+    assert memory.read_text(encoding="utf-8") == "state-a\n"
+    assert not journal.path.exists()
+
+
+def test_recover_marker_mismatch_blocks_preview_and_execute_equally(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    keysmith_dir = home / ".claude" / "keysmith"
+    keysmith_dir.mkdir(parents=True)
+    (keysmith_dir / "system-prompt.md").write_text("expected\n", encoding="utf-8")
+    settings_path = home / ".claude" / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "systemPrompt": "drifted\n",
+                claude_instruct.RECOVERY_MARKER_KEY: True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    before_preview = snapshot_tree(home)
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home, check=False)
+    preview_payload = json.loads(preview.stdout)
+    assert preview.returncode == 1
+    assert preview_payload["ok"] is False
+    assert preview_payload["blockers"]
+    assert not any(item["action"] == "clear-settings-marker" for item in preview_payload["planned_repairs"])
+    assert snapshot_tree(home) == before_preview
+
+    execute = run_cli(
+        ["recover", "--scope", "user", "--yes", "--json"],
+        home=home,
+        check=False,
+    )
+    execute_payload = json.loads(execute.stdout)
+    assert execute.returncode == 1
+    assert execute_payload["blockers"] == preview_payload["blockers"]
+    assert json.loads(settings_path.read_text(encoding="utf-8"))[claude_instruct.RECOVERY_MARKER_KEY] is True
+
+
+def test_recover_aligned_marker_preview_is_pure_then_execute_clears(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    keysmith_dir = home / ".claude" / "keysmith"
+    keysmith_dir.mkdir(parents=True)
+    system_body = "expected\n"
+    (keysmith_dir / "system-prompt.md").write_text(system_body, encoding="utf-8")
+    settings_path = home / ".claude" / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "systemPrompt": system_body,
+                claude_instruct.RECOVERY_MARKER_KEY: True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    before_preview = snapshot_tree(home)
+    preview_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--json"], home=home).stdout
+    )
+    assert preview_payload["ok"] is True
+    assert any(item["action"] == "clear-settings-marker" for item in preview_payload["planned_repairs"])
+    assert snapshot_tree(home) == before_preview
+
+    execute_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home).stdout
+    )
+    assert execute_payload["ok"] is True
+    assert claude_instruct.RECOVERY_MARKER_KEY not in json.loads(
+        settings_path.read_text(encoding="utf-8")
+    )
 
 
 def test_recover_fail_closed_on_path_rebinding(tmp_path, monkeypatch):

@@ -11,6 +11,7 @@
   - `blockers` 非空 ⇒ `ok: false`、`exit_status: 1`，命令不做任何写入。
   - `ok: false` ⇒ 调用方必须视为失败并停止后续动作，即使 exit code 为 0 的场景也不存在——非零 exit 与 `ok:false` 同时成立。
   - 未捕获异常同样以 `ok: false` + `error` 输出 JSON（不丢 Python traceback 给调用方）。
+  - **参数校验失败**（如 `--max-tokens 0`）在传入 `--json` 时也输出契约 JSON 到 stdout（`ok: false`、`exit_status: 2`，`error` / `blockers` 为 argparse 的具体原因），argparse 的 usage 文本仍保留在 stderr 供人工阅读；进程退出码为 2。
   - GUI 侧的 proceed 判定见 `gui/src/lib/parser.js` 的 `gateReport`：`exit_code !== 0`、`blockers` 非空、`ok === false` 任一成立即 blocked。
 - **凭证脱敏**：契约与文本输出都不包含 API token、cookie、Base URL 或非目标的 `settings.json` 字段值。`settings.json` 仅以路径（`settings_file`）和布尔对齐状态（`settings_system_prompt_aligned`）出现；`doctor` 更是固定 9 个键，永不扩展出凭证字段。
 - **sha256 / size_bytes**：`backups[]`、`source`/`sources`、`status.source_identity` 中的指纹均为 SHA-256 十六进制 + 字节数，供调用方核验内容，不展示内容本身。

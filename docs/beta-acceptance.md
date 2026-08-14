@@ -8,11 +8,12 @@
 | 项目 | 命令 / 方式 | 结果 |
 |---|---|---|
 | CLI 语法 | `python3 -m py_compile claude-instruct.py` | 通过 |
-| CLI 测试套件 | `python3 -m pytest tests`（含 `test_json_contract.py`、`test_transaction_recovery.py`、`test_controlled_restore.py`、`test_wrapper_and_max_tokens.py`） | 通过（111 passed） |
-| 前端测试 | `cd gui && npm test`（vitest：parser / store / windowLifecycle / 视图逻辑） | 通过（10 个测试文件，97 passed） |
-| Rust 门禁 | `cd gui/src-tauri && cargo fmt --check && cargo check --locked && cargo test --locked` | 通过（7 passed） |
+| CLI 测试套件 | 隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` 后运行 `python3 -m pytest tests`（含 `test_json_contract.py`、`test_transaction_recovery.py`、`test_controlled_restore.py`、`test_wrapper_and_max_tokens.py`） | 通过（121 passed） |
+| 前端测试 | `cd gui && npm test`（vitest：parser / store / windowLifecycle / 写互斥 / 打包配置 / 视图逻辑） | 通过（11 个测试文件，113 passed） |
+| Rust 门禁 | `cd gui/src-tauri && cargo fmt --check && cargo check --locked && cargo test --locked` | 通过（7 passed；干净检出无需预先构建 sidecar） |
 | sidecar 构建 | `npm run build:sidecar`（PyInstaller onefile，含 `--version` smoke） | 通过（本机 `aarch64-apple-darwin`，sidecar 报 `claude-keysmith v7`） |
 | 前端生产构建 | `npm run build`（vite → `dist/`） | 通过 |
+| macOS 发行打包 | `npm run bundle`，随后 `hdiutil verify` 并挂载检查内嵌 sidecar | 通过（`.app` + `.dmg`；DMG 校验有效；内嵌 arm64 sidecar 报 `claude-keysmith v7`） |
 | 隔离 HOME smoke | 以临时 `HOME` 运行 install/status/backups/restore/recover/uninstall `--json` 全流程 | 通过（本文档 JSON 示例即来自该流程，已脱敏） |
 
 ## 二、发布前必须在实体机验证（PENDING，未通过不得外发）
@@ -30,8 +31,7 @@
 
 ### Windows x64 实体机 / 原生 CI runner（全部为 PENDING）
 
-- [ ] 原生 runner 上 `npm run build:sidecar`（`x86_64-pc-windows-msvc`）成功，`--version` smoke 通过。
-- [ ] `tauri build` 产出 NSIS currentUser 安装器；WebView2 bootstrapper 在无 WebView2 的机器上能静默安装运行时。
+- [ ] 原生 runner 上 `npm run bundle` 成功：先构建 `x86_64-pc-windows-msvc` sidecar 并通过 `--version` smoke，再产出 NSIS currentUser 安装器；WebView2 bootstrapper 在无 WebView2 的机器上能静默安装运行时。
 - [ ] 安装 → 启动 → sidecar 探测 → Deploy（user runtime，PowerShell profile wrapper，`. $PROFILE` 生效）。
 - [ ] uninstall / restore / recover / 退出行为同 macOS 清单。
 - [ ] 旧 launcher 迁移路径（存在 `~/.local/bin/claude.ps1`/`claude.cmd` 时）按 dry-run 计划执行；未知同名文件触发冲突而非覆盖。
@@ -45,6 +45,6 @@
 
 ## 三、发布边界声明
 
-- 本 worktree 仅产出源码与文档；`npm run bundle` / `tauri build` 在 worktree 外执行。
+- 本 worktree 仅产出源码与文档；发行打包只用 `npm run bundle`，并在 worktree 外执行。
 - 无代码签名、无 notarization/Authenticode、无自动更新、无 Linux GUI——这些是发布前显式门槛（见 [`platform-support.md`](platform-support.md)）。
 - 第二节全部条目勾选并记录前，`0.1.0-beta.1` 不得对任何外部渠道发布。

@@ -33,8 +33,17 @@
 - Tauri 2 + React 19 + Vite + Tailwind 4 + Radix + Motion；PyInstaller onefile sidecar（`claude-keysmith-cli`）与 CLI 同源构建；react-i18next（zh-CN/en）。
 - 页面：Dashboard / 三步 Deploy 向导 / Manage（uninstall、受控备份 restore、recover、repair）/ Settings。
 - 进程边界：argv 数组调用（无 shell 拼接）、stdout/stderr 各 2 MiB 上限（截断失败关闭）、超时杀整棵进程树（unix 进程组 `kill(-pid)`；windows `taskkill /T /F`）、`kill_on_drop`。
-- 单实例、全局写互斥（操作租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
+- 单实例、全局写互斥（操作租约；`execute*` 写路径经 `cliRunExclusive` 持有独占租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
 - 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 配置就绪但 **PENDING 原生 runner 验收**；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
+
+### Review 修复（本轮）
+
+- **构建门禁解耦**：`externalBin` 从常驻平台配置移到打包专用的 `gui/src-tauri/tauri.bundle.conf.json`（由 `npm run bundle` 的 `tauri build --config` 引入）。干净检出上 `cargo fmt --check` / `cargo check --locked` / `cargo test --locked` 不再因缺少（且被 gitignore 的）sidecar 产物而失败。
+- **`recover` 预览与执行同源判定**：新增只读检查函数 `plan_pending_rollback`（读取指纹与备份证据，但不写入、删除或重命名），预览阶段就展开具体修复步骤并对不可恢复情形（未知修改、找不到匹配指纹的备份、回滚目标被重建）返回 blocker，消除“预览 `ok:true` → 确认 → execute 才失败”的 GUI 确认缺口。
+- **全局写互斥真正接线**：`beginExclusiveOperation` 原本无生产调用方；新增 `cliRunExclusive`，`executeInstall` / `executeUninstall` / `executeRestore` / `executeRecover` 均改走独占租约，preview 与读操作保留共享租约。
+- **`--json` 下的参数校验错误输出契约 JSON**：argparse usage error（如 `--max-tokens 0`）现在向 stdout 输出 `ok:false` / `exit_status:2` 的契约文档，usage 文本仍在 stderr；GUI 不再报“CLI 未输出稳定 JSON”而是显示真实原因。
+- 移除无调用方的 `_rollback_moved_pairs`；`cli_runner.rs` 的 stdout/stderr 管道缺失从 `expect` panic 改为终止子进程并失败关闭；vite `manualChunks` 拆分 react / radix / motion / i18n，消除 >500 kB chunk 警告（当前最大 chunk 200.09 kB）。
+- 文档同步：`gui/SPEC.md`、`docs/desktop-gui.md` 的写互斥表述改为与实现一致；`docs/transaction-recovery.md` 补充预览/执行同源判定与非受控 `restore` 的事务边界；`docs/json-contract.md` 记录 usage error 的 JSON 行为。
 
 ### Windows wrapper retry safety
 
