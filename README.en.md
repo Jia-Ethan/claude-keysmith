@@ -84,7 +84,7 @@ Do not execute `curl | python`. Download or clone, inspect the script and exampl
 
 - Architecture, process boundary, and pages: [`docs/desktop-gui.md`](docs/desktop-gui.md); engineering spec: [`gui/SPEC.md`](gui/SPEC.md) (Simplified Chinese).
 - The GUI consumes only the CLI `--json` contract (`claude-keysmith/v1`); every write is preview → confirm → `--yes`, and restore uses only the controlled backups enumerated by `backups --json`.
-- Platforms: macOS Apple Silicon builds `.app` / `.dmg`; the Windows x64 NSIS configuration is ready but **PENDING native-runner acceptance**; no Linux GUI, no auto-update, no signing/notarization. See [`docs/platform-support.md`](docs/platform-support.md) and [`docs/beta-acceptance.md`](docs/beta-acceptance.md).
+- Platforms: macOS Apple Silicon builds `.app` / `.dmg`; Windows x64 NSIS now passes native CI build, silent install/uninstall, and frozen-sidecar smoke, while physical visible-UI, SmartScreen, and no-WebView2 acceptance remain pending; no Linux GUI, no auto-update, no signing/notarization. See [`docs/platform-support.md`](docs/platform-support.md) and [`docs/beta-acceptance.md`](docs/beta-acceptance.md).
 
 ## CLI automation interface (new in v7)
 

@@ -38,13 +38,14 @@
 - 页面：Dashboard / 三步 Deploy 向导 / Manage（uninstall、受控备份 restore、recover、repair）/ Settings。
 - 进程边界：argv 数组调用（无 shell 拼接）、stdout/stderr 各 2 MiB 上限（截断失败关闭）、超时杀整棵进程树（unix 进程组 `kill(-pid)`；windows `taskkill /T /F`）、`kill_on_drop`。
 - 单实例、全局写互斥（操作租约；`execute*` 写路径经 `cliRunExclusive` 持有独占租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
-- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 配置就绪但 **PENDING 原生 runner 验收**；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。前述缺失是本次 `unsigned beta` 明确披露的限制，不替代 UI、强杀恢复与 Windows 原生验收等真实发布门禁。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
+- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 已通过原生 CI 构建、静默安装/卸载和冻结 sidecar 自动化链，实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复仍为发布门禁；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
 
 ### 发布候选构建链
 
 - `gui-release-candidate` workflow 仅用 `contents: read` 且无 secrets：main PR 自动生成 `release_eligible:false` 的验证 artifact；合并后必须在 main 上传入精确 `expected_sha` 才能生成 `release_eligible:true` 候选。Windows x64 与 macOS ARM64 先跑 CLI / 前端 / Rust 全部门禁，再原生构建 PyInstaller sidecar 与 NSIS / DMG，核验安装/卸载或挂载、版本、架构、签名状态、source commit 与哈希后上传 artifact；不打 tag、不建 Release。
-- `docs/beta-acceptance.md` 记录 125 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组强杀后的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链，以及 macOS GUI Dashboard / Deploy / Manage / 操作中关闭实体机验收；未取证的 Gatekeeper 用户视角与 Windows 项继续保持 PENDING。
-- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；真正阻塞 beta 外发的是平台候选可追溯性与 `docs/beta-acceptance.md` 中尚未完成的实体机、UI、强杀恢复和 Windows 原生验收。
+- Windows 候选在原生 runner 完成静默 currentUser 安装/卸载、冻结 sidecar runtime、PowerShell 5.1 / 7 wrapper、scoped restore、原子残留 recover、隐私、GUI 进程与单实例 smoke；安装器、GUI、sidecar 与 uninstaller 均确认 `NotSigned`。`SHA256SUMS` 强制写为 LF-only，并在上传前拒绝 CR 字节，保证 macOS/Linux 可直接 `shasum -c`。
+- `docs/beta-acceptance.md` 记录 125 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组强杀后的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链，以及 macOS GUI Dashboard / Deploy / Manage / 操作中关闭实体机验收；未取证的 Gatekeeper 用户视角、真实 Claude 升级与 Windows 实体机项目继续保持 PENDING。
+- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；真正阻塞 beta 外发的是 main 候选可追溯性与 `docs/beta-acceptance.md` 中尚未完成的实体机、用户视角和事务强杀恢复验收。
 - `docs/reference.md` 修正残留的 “v6 当前模板” 为 v7；新增 `docs/release-notes-drafts.md`（v7 与 desktop-v0.1.0-beta.1 同批次双 Release 草稿，未写发布日期）。
 
 ### Review 修复（本轮）

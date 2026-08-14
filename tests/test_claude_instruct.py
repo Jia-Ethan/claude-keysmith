@@ -1373,22 +1373,25 @@ def test_powershell_wrapper_all_candidates_missing_throws_and_returns_control(tm
     append_prompt.write_text("append\n", encoding="utf-8")
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_SECONDS", 0.2)
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_MILLISECONDS", 25)
-    profile.write_text(
-        claude_instruct.render_shell_wrapper(
-            missing,
-            system_prompt,
-            append_prompt,
-            "powershell",
-            [{"kind": "missing", "path": str(missing), "exists": False, "eligible": True, "reason": "missing"}],
-        ),
-        encoding="utf-8",
+    wrapper = claude_instruct.render_shell_wrapper(
+        missing,
+        system_prompt,
+        append_prompt,
+        "powershell",
+        [{"kind": "missing", "path": str(missing), "exists": False, "eligible": True, "reason": "missing"}],
     )
+    assert "AddSeconds(0.2)" in wrapper
+    assert "Start-Sleep -Milliseconds 25" in wrapper
+    profile.write_text(wrapper, encoding="utf-8")
     command = "\n".join(
         [
             f". {claude_instruct._powershell_quote(profile)}",
             "$caught = $false",
+            "$timer = [Diagnostics.Stopwatch]::StartNew()",
             "try { claude } catch { $caught = $true }",
+            "$timer.Stop()",
             "if (-not $caught) { throw 'missing upstream did not throw' }",
+            "if ($timer.Elapsed.TotalSeconds -ge 3) { throw 'missing upstream retry exceeded test bound' }",
             f"Set-Content -LiteralPath {claude_instruct._powershell_quote(continued_marker)} -Value 'continued'",
         ]
     )
@@ -1397,7 +1400,7 @@ def test_powershell_wrapper_all_candidates_missing_throws_and_returns_control(tm
         [claude_instruct.shutil.which("pwsh"), "-NoLogo", "-NoProfile", "-Command", command],
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=15,
         check=False,
     )
 
@@ -1527,37 +1530,40 @@ def test_powershell_wrapper_does_not_retry_errors_from_started_script(
     )
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_SECONDS", 0.2)
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_MILLISECONDS", 25)
-    profile.write_text(
-        claude_instruct.render_shell_wrapper(
-            upstream,
-            system_prompt,
-            append_prompt,
-            "powershell",
-            [
-                {
-                    "kind": "script",
-                    "path": str(upstream),
-                    "exists": True,
-                    "eligible": True,
-                    "reason": "fixture",
-                },
-                {
-                    "kind": "fallback",
-                    "path": str(fallback),
-                    "exists": True,
-                    "eligible": True,
-                    "reason": "must not run",
-                },
-            ],
-        ),
-        encoding="utf-8",
+    wrapper = claude_instruct.render_shell_wrapper(
+        upstream,
+        system_prompt,
+        append_prompt,
+        "powershell",
+        [
+            {
+                "kind": "script",
+                "path": str(upstream),
+                "exists": True,
+                "eligible": True,
+                "reason": "fixture",
+            },
+            {
+                "kind": "fallback",
+                "path": str(fallback),
+                "exists": True,
+                "eligible": True,
+                "reason": "must not run",
+            },
+        ],
     )
+    assert "AddSeconds(0.2)" in wrapper
+    assert "Start-Sleep -Milliseconds 25" in wrapper
+    profile.write_text(wrapper, encoding="utf-8")
     command = "\n".join(
         [
             f". {claude_instruct._powershell_quote(profile)}",
             "$caughtType = $null",
+            "$timer = [Diagnostics.Stopwatch]::StartNew()",
             "try { claude } catch { $caughtType = $_.Exception.GetType().Name }",
+            "$timer.Stop()",
             f"if ($caughtType -ne '{exception_name}') {{ throw \"unexpected error: $caughtType\" }}",
+            "if ($timer.Elapsed.TotalSeconds -ge 3) { throw 'started script retry exceeded test bound' }",
         ]
     )
     env = os.environ.copy()
@@ -1569,7 +1575,7 @@ def test_powershell_wrapper_does_not_retry_errors_from_started_script(
         env=env,
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=15,
         check=False,
     )
 

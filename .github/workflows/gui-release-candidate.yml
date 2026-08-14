@@ -378,10 +378,18 @@ jobs:
             artifacts      = $entries
           }
           $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'BUILD_INFO.json') -Encoding UTF8
-          $sums -join "`n" | Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS') -Encoding Ascii
+          $sumsPath = Join-Path $stage 'SHA256SUMS'
+          [System.IO.File]::WriteAllText(
+            $sumsPath,
+            (($sums -join "`n") + "`n"),
+            [System.Text.Encoding]::ASCII
+          )
+          if ([System.IO.File]::ReadAllBytes($sumsPath) -contains 13) {
+            throw 'SHA256SUMS must use portable LF line endings'
+          }
 
           Get-Content (Join-Path $stage 'BUILD_INFO.json')
-          Get-Content (Join-Path $stage 'SHA256SUMS')
+          Get-Content $sumsPath
           "STAGE_DIR=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
 
       - name: Upload Windows candidate
