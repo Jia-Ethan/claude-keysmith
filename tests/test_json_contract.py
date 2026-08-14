@@ -1,5 +1,6 @@
 """Contract tests for the claude-keysmith/v1 machine-readable JSON output."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -114,7 +115,9 @@ def test_install_json_execute_shape_and_backups(tmp_path):
     home = tmp_path / "home"
     claude_dir = home / ".claude"
     claude_dir.mkdir(parents=True)
-    (claude_dir / "CLAUDE.md").write_text("# keep me\n", encoding="utf-8")
+    memory_path = claude_dir / "CLAUDE.md"
+    memory_path.write_text("# keep me\n", encoding="utf-8")
+    original_bytes = memory_path.read_bytes()
 
     result = run_cli(["install", "--scope", "user", "--name", "rules", "--yes", "--json"], home=home)
 
@@ -126,9 +129,11 @@ def test_install_json_execute_shape_and_backups(tmp_path):
     memory_backups = [b for b in payload["backups"] if b["target"].endswith("CLAUDE.md")]
     assert memory_backups, payload["backups"]
     entry = memory_backups[0]
-    assert Path(entry["backup_path"]).is_file()
-    assert entry["sha256"]
-    assert entry["size_bytes"] == len("# keep me\n".encode("utf-8"))
+    backup_path = Path(entry["backup_path"])
+    assert backup_path.is_file()
+    assert backup_path.read_bytes() == original_bytes
+    assert entry["sha256"] == hashlib.sha256(original_bytes).hexdigest()
+    assert entry["size_bytes"] == len(original_bytes)
     assert entry["created"]
     assert (claude_dir / "keysmith" / "rules.md").is_file()
 
