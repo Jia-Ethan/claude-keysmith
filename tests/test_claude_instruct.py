@@ -1562,9 +1562,12 @@ def test_powershell_wrapper_does_not_retry_errors_from_started_script(
     )
     assert "AddSeconds(0.2)" in wrapper
     assert "Start-Sleep -Milliseconds 25" in wrapper
-    assert "$_.InvocationInfo.InvocationName -eq '&'" in wrapper
-    assert "$_.CategoryInfo.TargetName -eq $candidate" in wrapper
-    assert "$_.InvocationInfo.ScriptName -eq $PSCommandPath" in wrapper
+    launch_failure_guard = (
+        "$_.InvocationInfo.InvocationName -eq '&' -and "
+        "$_.CategoryInfo.TargetName -eq $candidate -and "
+        "$_.InvocationInfo.ScriptName -eq $PSCommandPath"
+    )
+    assert wrapper.count(launch_failure_guard) == 2
     profile.write_text(wrapper, encoding="utf-8")
     command = "\n".join(
         [
