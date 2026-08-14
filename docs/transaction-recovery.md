@@ -40,13 +40,13 @@ journal 在每次真实写入前创建，**每个 mutation 前后都原子落盘
 
 记录内容：`journal_id`（uuid hex）、`operation`、`scope`、`scope_root`、`pid`、`started_at`/`committed_at`、`state`，以及：
 
-- `steps[]`：每步 `{action: backup|write|remove|migrate, path, before: {sha256,size_bytes,exists}, after: {...}, backup_path?, at}`；`migrate` 步骤额外记录 `moved: [[source, backup], ...]`（Windows 旧 launcher 迁移）。
+- `steps[]`：每步 `{action: backup|write|remove|migrate, path, before: {sha256,size_bytes,exists}, after: {...}, backup_path?, at}`；`migrate` 在任何 rename 前额外持久化 `migration_items: [{source,backup,before}, ...]`，每次成功移动后再追加兼容字段 `moved: [[source, backup], ...]`。
 - `backups[]`：备份证据 `{target, backup_path, sha256, size_bytes, created}`。
 
 两阶段语义：
 
-- **commit 成功前中断（state=pending）** ⇒ 下次写入或 `recover` 时**逆序回滚**：文件当前指纹匹配 after ⇒ 用备份/旧内容恢复 before 状态；before 不存在（事务新建文件）⇒ 删除；当前指纹仍等于 before（写入未生效）⇒ 跳过。`migrate` 步骤逆序把备份 rename 回原路径。
-- **commit 成功后中断（state=committed）** ⇒ **永不反转**。只做残留核验（例如已提交迁移的目标被意外重建则报告 blocker），核验干净后消费掉 journal。这就是"crash-after-commit 窗口"：`journal.finish()` 删除失败或进程死在 commit 与 finish 之间时，下一次写入会在锁内核验该 committed journal 无残留后直接消费，不阻塞。
+- **commit 成功前中断（state=pending）** ⇒ 下次写入或 `recover` 时**逆序回滚**：文件当前指纹匹配 after ⇒ 用备份/旧内容恢复 before 状态；before 不存在（事务新建文件）⇒ 删除；当前指纹仍等于 before（写入未生效）⇒ 跳过。`migrate` 通过 rename 前已落盘的 source / backup 路径与源指纹判断移动是否发生，只恢复匹配备份，且使用 no-overwrite 移动；Windows 原子 rename 后、POSIX hard-link 与 unlink 之间或之后被强杀都可恢复。
+- **commit 成功后中断（state=committed）** ⇒ **永不反转**。只做残留核验（迁移目标不得被重建，迁移备份仍必须匹配 commit 前持久化的 source 指纹），核验干净后消费掉 journal。这就是"crash-after-commit 窗口"：`journal.finish()` 删除失败或进程死在 commit 与 finish 之间时，下一次写入会在锁内核验该 committed journal 无残留后直接消费，不阻塞。
 
 回滚定位 before 内容的顺序：优先使用步骤记录的 `backup_path`（校验其 sha256 等于 before）；缺失时在同目录的 `<name>.bak_*` 候选中找指纹匹配者；都找不到 ⇒ blocker，保留证据。
 
@@ -72,6 +72,7 @@ preview 模式（无 `--yes`）完全不触碰文件系统，不检查门槛、�
 - `remove` 步骤的目标被未知方重建（存在但指纹不等于 before）⇒ 拒绝覆盖。
 - 找不到匹配 before 指纹的备份 ⇒ 回滚受阻。
 - 迁移备份缺失 ⇒ 无法回滚该迁移。
+- 迁移 source / backup 同时存在但不是 POSIX 同一 hard-link inode ⇒ 视为外部同名竞态，保留两者并阻塞；不会仅凭内容相同删除文件。
 - 未知的 journal 步骤类型 ⇒ 保留证据并阻塞。
 - 活跃的他方锁（live PID）。
 - 损坏的 journal ⇒ 保留证据并阻塞。

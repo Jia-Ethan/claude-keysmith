@@ -38,7 +38,7 @@ CLI 稳定性与可编程性版本。
 
 - 页面：Dashboard（sidecar 探测 / 状态）、三步 Deploy 向导、Manage（uninstall / 受控备份 restore / recover / repair）、Settings（zh-CN / en）。
 - 每一步写操作都走 CLI JSON 契约的 preview → confirm → execute，失败关闭：超时杀整棵进程树、输出超限拒绝解析、全局写互斥、关闭窗口排队等待在途操作。Manage restore 使用 `backups --json` 返回的绝对目标路径并由 CLI 复核 scope 内 target / backup 精确配对。
-- 目标产物：macOS Apple Silicon `.dmg`；Windows x64 NSIS currentUser 安装器 + WebView2 bootstrapper。Windows 原生 CI 构建、静默安装/卸载、冻结 sidecar、PowerShell wrapper、restore/recover、隐私、GUI 进程与单实例 smoke 已通过；实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复仍待验收。
+- 目标产物：macOS Apple Silicon `.dmg`；Windows x64 NSIS currentUser 安装器 + WebView2 bootstrapper。Windows 原生 CI 构建、静默安装/卸载、冻结 sidecar、PowerShell wrapper、restore/recover、隐私、GUI 进程与单实例 smoke 已通过；旧 launcher 迁移/强杀恢复为 source-CLI 自动门禁。实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复仍待验收。
 
 **本次 beta 已接受的限制（重要）**：
 
@@ -48,7 +48,7 @@ CLI 稳定性与可编程性版本。
 
 **发布门禁**：
 
-- [`beta-acceptance.md`](beta-acceptance.md) 第二节全部未完成条目必须完成并留存证据。macOS GUI UI 与真实进程强杀恢复 E2E 已通过；Windows 原生自动化链已通过，剩余门禁集中在 Gatekeeper、真实 Claude 升级与 Windows 实体机用户视角/强杀恢复。
+- [`beta-acceptance.md`](beta-acceptance.md) 第二节全部未完成条目必须完成并留存证据。macOS GUI UI 与真实进程强杀恢复 E2E 已通过；Windows 原生自动化链已通过，source-CLI launcher 恢复测试已纳入候选 workflow，待本 PR Windows CI 取证；其余门禁集中在 Gatekeeper、用户安装的 Claude 升级与 Windows 实体机用户视角/强杀恢复。
 - 两个平台仅发布实际通过验收的 main 候选，且 `release_eligible:true`，`BUILD_INFO.json` / LF-only `SHA256SUMS` 与安装器、sidecar 一致；tag、Release 与外发仍需单独明确授权。
 - 发现问题请开 issue。
 

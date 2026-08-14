@@ -98,6 +98,16 @@ jobs:
           python -m py_compile claude-instruct.py
           python -m pytest -q tests
 
+      # These exercise the source CLI on a Windows filesystem. The installed
+      # sidecar smoke below remains the package-level runtime evidence.
+      - name: Windows source-CLI launcher migration and forced-kill recovery tests
+        shell: pwsh
+        run: |
+          python -m pytest -q tests/test_transaction_recovery.py -k "forced_kill_after_first_legacy_launcher_move"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q tests/test_claude_instruct.py -k "legacy_launcher"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Install sidecar build requirements
         shell: pwsh
         run: python -m pip install -r gui/requirements-build.txt
@@ -369,6 +379,8 @@ jobs:
             packaged_runtime_smoke = $true
             scoped_restore_smoke = $true
             recovery_smoke = $true
+            source_cli_legacy_launcher_migration_e2e = $true
+            source_cli_forced_kill_recovery_e2e = $true
             privacy_smoke = $true
             gui_process_smoke = $true
             single_instance_smoke = $true

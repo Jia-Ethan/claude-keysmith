@@ -20,6 +20,7 @@
 - 所有写路径（install / uninstall / 受控 restore）由 scope 本地的排他锁（`.keysmith.lock`，O_EXCL，含 `{pid,label,acquired_at}`）与持久化事务日志（`.journal-<uuid>.json`，`claude-keysmith-journal/v1`）保护；每个 mutation 前后原子落盘 before/after 指纹。
 - 两阶段 `pending` → `committed`：commit 前中断逆序回滚到之前的状态（恢复指纹校验过的备份，或删除事务新建文件）；commit 后永不反转，只做残留核验，核验干净的 journal 被下一次写入或 `recover` 消费。
 - 修复 mutation 后指纹只更新了临时字典、没有写回实际 journal 的事务证据缺口；强杀后 recovery 现在能依据持久化 after 指纹精确判断，第三方后续修改仍会失败关闭。
+- Windows 旧 launcher 迁移在任何移动前持久化 source / backup 路径与源指纹，并在每个成功移动后落盘进度；强杀发生在首个 rename 后也能由 `recover` 精确还原。恢复使用 no-overwrite 移动，悬空同名链接、被重建目标、篡改备份或同内容但不同文件身份的竞态均失败关闭并保留证据。
 - 原子写临时文件采用 keysmith 专属命名；强杀遗留会让 status 标记 recovery-required、阻塞新写入，并由 recover 只读预览后定向清理。
 - 失败关闭：活跃他方锁、损坏 journal、原子临时残留、未知修改（指纹既不等于 before 也不等于 after）、回滚目标被重建、找不到匹配备份等情况一律阻塞并保留证据。设计见 `docs/transaction-recovery.md`。
 
@@ -27,6 +28,7 @@
 
 - 修复 macOS / Linux wrapper 将 `command -v claude` 的符号链接解析结果（版本目录）烙进 wrapper，导致 Claude 更新切换版本后失效的问题。
 - wrapper 保留已解析路径作为快路径；路径消失时每次调用重新经 `command -v claude` 解析（zsh 下以 `disable -f claude` / `enable -f claude` 包裹，附 `command -v -p` 兜底）；全部解析失败返回 127 并给出干净诊断。
+- `status` / `doctor` 对已消失的旧快路径按动态 wrapper 语义判断，不再在隔离 npm prefix 的 Claude Code 包版本目录切换成功后误报 `shell_wrapper_current:false` / `runtime_ready:false`；仍会拒绝任何其它 wrapper 结构漂移。
 
 **参数校验：**
 
@@ -43,9 +45,9 @@
 ### 发布候选构建链
 
 - `gui-release-candidate` workflow 仅用 `contents: read` 且无 secrets：main PR 自动生成 `release_eligible:false` 的验证 artifact；合并后必须在 main 上传入精确 `expected_sha` 才能生成 `release_eligible:true` 候选。Windows x64 与 macOS ARM64 先跑 CLI / 前端 / Rust 全部门禁，再原生构建 PyInstaller sidecar 与 NSIS / DMG，核验安装/卸载或挂载、版本、架构、签名状态、source commit 与哈希后上传 artifact；不打 tag、不建 Release。
-- Windows 候选在原生 runner 完成静默 currentUser 安装/卸载、冻结 sidecar runtime、PowerShell 5.1 / 7 wrapper、scoped restore、原子残留 recover、隐私、GUI 进程与单实例 smoke；安装器、GUI、sidecar 与 uninstaller 均确认 `NotSigned`。`SHA256SUMS` 强制写为 LF-only，并在上传前拒绝 CR 字节，保证 macOS/Linux 可直接 `shasum -c`。
-- `docs/beta-acceptance.md` 记录 125 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组强杀后的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链，以及 macOS GUI Dashboard / Deploy / Manage / 操作中关闭实体机验收；未取证的 Gatekeeper 用户视角、真实 Claude 升级与 Windows 实体机项目继续保持 PENDING。
-- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；真正阻塞 beta 外发的是 main 候选可追溯性与 `docs/beta-acceptance.md` 中尚未完成的实体机、用户视角和事务强杀恢复验收。
+- Windows 候选在原生 runner 完成静默 currentUser 安装/卸载、冻结 sidecar runtime、PowerShell 5.1 / 7 wrapper、scoped restore、原子残留 recover、隐私、GUI 进程与单实例 smoke；另以 source-CLI pytest 覆盖旧 launcher 迁移/冲突与首个 rename 后强杀恢复，`BUILD_INFO.json` 明确标为 source-CLI 证据。安装器、GUI、sidecar 与 uninstaller 均确认 `NotSigned`。`SHA256SUMS` 强制写为 LF-only，并在上传前拒绝 CR 字节，保证 macOS/Linux 可直接 `shasum -c`。
+- `docs/beta-acceptance.md` 记录 135 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组与 source-CLI 旧 launcher 首次移动后强杀的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链、隔离 npm prefix 的真实 Claude `2.1.231 → 2.1.232` 包版本切换 smoke，以及 macOS GUI Dashboard / Deploy / Manage / 操作中关闭实体机验收；用户安装的 Claude 升级、Gatekeeper 用户视角与 Windows 实体机项目继续保持 PENDING。
+- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；真正阻塞 beta 外发的是 main 候选可追溯性与 `docs/beta-acceptance.md` 中尚未完成的实体机和用户视角验收。
 - `docs/reference.md` 修正残留的 “v6 当前模板” 为 v7；新增 `docs/release-notes-drafts.md`（v7 与 desktop-v0.1.0-beta.1 同批次双 Release 草稿，未写发布日期）。
 
 ### Review 修复（本轮）
