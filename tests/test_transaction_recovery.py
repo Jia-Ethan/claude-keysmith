@@ -317,6 +317,40 @@ def test_recover_pending_write_restores_prior_content(tmp_path, monkeypatch):
 # --------------------------------------------------------- fail closed -----
 
 
+def test_transaction_helpers_persist_after_evidence_and_reject_later_edit(tmp_path, monkeypatch):
+    """Production tx helpers must persist after-state evidence, not only the
+    in-memory step object, so recovery can distinguish our write from a later
+    third-party edit and fail closed instead of overwriting it."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    memory = paths.memory_file
+    memory.parent.mkdir(parents=True)
+    memory.write_text("before\n", encoding="utf-8")
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    backup = claude_instruct.tx_backup_step(journal, memory, "20260814_120000")
+    claude_instruct.tx_write_step(journal, memory, "transaction write\n")
+
+    persisted = claude_instruct.load_journal(journal.path)
+    assert persisted is not None
+    backup_step, write_step = [
+        step for step in persisted["steps"] if step["action"] in {"backup", "write"}
+    ]
+    assert backup_step["after"]["exists"] is True
+    assert backup_step["backup_path"] == str(backup)
+    assert write_step["after"] == claude_instruct.file_evidence(memory)
+
+    memory.write_text("third-party edit\n", encoding="utf-8")
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home, check=False)
+    payload = json.loads(preview.stdout)
+    assert preview.returncode == 1
+    assert payload["ok"] is False
+    assert any("未知修改" in blocker for blocker in payload["blockers"])
+    assert memory.read_text(encoding="utf-8") == "third-party edit\n"
+    assert journal.path.exists()
+
+
 def test_recover_fail_closed_on_unknown_modification(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
@@ -595,6 +629,47 @@ def test_corrupt_journal_blocks_writes_and_is_reported(tmp_path, monkeypatch):
     assert payload["blockers"]
     assert preview.returncode == 1
     assert corrupt.exists()  # evidence preserved
+
+
+def test_recover_cleans_owned_atomic_temp_residue_without_touching_foreign_files(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    paths.keysmith_dir.mkdir(parents=True)
+    owned = paths.keysmith_dir / f".rules.md{claude_instruct.ATOMIC_TEMP_MARKER}dead.tmp"
+    foreign = paths.keysmith_dir / "tmp-user-file"
+    owned.write_text("partial atomic write", encoding="utf-8")
+    foreign.write_text("keep", encoding="utf-8")
+
+    recovery_state = claude_instruct.inspect_recovery_state(paths)
+    assert recovery_state["atomic_temp_files"] == [str(owned)]
+    assert recovery_state["recovery_required"] is True
+
+    blocked = run_cli(
+        ["install", "--scope", "user", "--name", "rules", "--yes", "--json"],
+        home=home,
+        check=False,
+    )
+    assert blocked.returncode == 1
+    assert "原子写临时残留" in json.loads(blocked.stdout)["error"]
+
+    before_preview = snapshot_tree(home)
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home)
+    preview_payload = json.loads(preview.stdout)
+    assert preview_payload["ok"] is True
+    assert any(item["kind"] == "atomic_temp" for item in preview_payload["residue"])
+    assert any(
+        item["action"] == "cleanup-atomic-temp"
+        for item in preview_payload["planned_repairs"]
+    )
+    assert snapshot_tree(home) == before_preview
+
+    execute = run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home)
+    execute_payload = json.loads(execute.stdout)
+    assert execute_payload["ok"] is True
+    assert any(item["action"] == "cleanup-atomic-temp" for item in execute_payload["actions"])
+    assert not owned.exists()
+    assert foreign.read_text(encoding="utf-8") == "keep"
 
 
 # ------------------------------------------------------- post-commit -------

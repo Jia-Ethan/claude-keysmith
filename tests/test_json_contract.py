@@ -414,9 +414,10 @@ def test_backups_json_enumerates_only_keysmith_scheme(tmp_path):
     assert payload["count"] == len(payload["backups"])
     assert payload["count"] >= 1
     for entry in payload["backups"]:
-        assert {"backup_path", "target_name", "sha256", "size_bytes", "created", "kind"} <= set(entry)
+        assert {"backup_path", "target_name", "target_path", "sha256", "size_bytes", "created", "kind"} <= set(entry)
         assert ".bak_2" in Path(entry["backup_path"]).name
         assert Path(entry["backup_path"]).is_file()
+        assert Path(entry["target_path"]) == Path(entry["backup_path"]).parent / entry["target_name"]
     names = [Path(e["backup_path"]).name for e in payload["backups"]]
     assert "CLAUDE.md.bak" not in names
     assert "random.txt" not in names
@@ -439,6 +440,101 @@ def test_backups_project_scope_filter(tmp_path):
     assert payload["scope"] == "project"
     assert payload["count"] >= 1
     assert all(str(project) in entry["backup_path"] for entry in payload["backups"])
+
+
+def test_scoped_restore_rejects_target_not_enumerated_by_backups(tmp_path):
+    home = tmp_path / "home"
+    run_cli(["install", "--scope", "user", "--name", "rules", "--yes"], home=home)
+    run_cli(["install", "--scope", "user", "--name", "rules", "--yes"], home=home)
+    backups = parse_json(run_cli(["backups", "--scope", "user", "--json"], home=home))["backups"]
+    chosen = next(entry for entry in backups if entry["target_name"] == "rules.md")
+    wrong_target = tmp_path / "outside.md"
+
+    result = run_cli(
+        [
+            "restore",
+            "--target",
+            str(wrong_target),
+            "--backup",
+            chosen["backup_path"],
+            "--scope",
+            "user",
+            "--yes",
+            "--json",
+        ],
+        home=home,
+        check=False,
+    )
+    payload = parse_json(result)
+
+    assert result.returncode == 1
+    assert payload["ok"] is False
+    assert payload["managed"] is False
+    assert "backups --json" in payload["error"]
+    assert not wrong_target.exists()
+
+
+def test_scoped_restore_uses_enumerated_absolute_pair_and_preview_is_read_only(tmp_path):
+    home = tmp_path / "home"
+    source_v1 = tmp_path / "rules-v1.md"
+    source_v2 = tmp_path / "rules-v2.md"
+    source_v1.write_text("rules v1\n", encoding="utf-8")
+    source_v2.write_text("rules v2\n", encoding="utf-8")
+    run_cli(
+        ["install", "--scope", "user", "--name", "rules", "--file", str(source_v1), "--yes"],
+        home=home,
+    )
+    run_cli(
+        ["install", "--scope", "user", "--name", "rules", "--file", str(source_v2), "--yes"],
+        home=home,
+    )
+
+    backups = parse_json(run_cli(["backups", "--scope", "user", "--json"], home=home))["backups"]
+    chosen = next(entry for entry in backups if entry["target_name"] == "rules.md")
+    target = Path(chosen["target_path"])
+    backup = Path(chosen["backup_path"])
+    assert target.is_absolute()
+    assert target.read_text(encoding="utf-8") == "rules v2\n"
+    before_preview = (target.read_bytes(), target.stat().st_mode, target.stat().st_mtime_ns)
+
+    preview = run_cli(
+        [
+            "restore",
+            "--target",
+            str(target),
+            "--backup",
+            str(backup),
+            "--scope",
+            "user",
+            "--json",
+        ],
+        home=home,
+    )
+    preview_payload = parse_json(preview)
+    assert preview_payload["ok"] is True
+    assert preview_payload["mode"] == "preview"
+    assert preview_payload["managed"] is True
+    assert (target.read_bytes(), target.stat().st_mode, target.stat().st_mtime_ns) == before_preview
+
+    execute = run_cli(
+        [
+            "restore",
+            "--target",
+            str(target),
+            "--backup",
+            str(backup),
+            "--scope",
+            "user",
+            "--yes",
+            "--json",
+        ],
+        home=home,
+    )
+    execute_payload = parse_json(execute)
+    assert execute_payload["ok"] is True
+    assert execute_payload["mode"] == "execute"
+    assert execute_payload["managed"] is True
+    assert target.read_bytes() == backup.read_bytes()
 
 
 def test_backups_text_output_still_works(tmp_path):

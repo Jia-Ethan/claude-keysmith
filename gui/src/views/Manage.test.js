@@ -20,6 +20,7 @@ describe("managed-backup restore contract", () => {
         {
           backup_path: "/p/CLAUDE.md.bak_20260814_010826",
           target_name: "CLAUDE.md",
+          target_path: "/p/CLAUDE.md",
           sha256: "abc",
           size_bytes: 154,
           created: "2026-08-14T01:08:26",
@@ -28,6 +29,7 @@ describe("managed-backup restore contract", () => {
         {
           backup_path: "/p/.claude/keysmith/claude-project-rules.md.bak_20260814_010826",
           target_name: "claude-project-rules.md",
+          target_path: "/p/.claude/keysmith/claude-project-rules.md",
           sha256: "def",
           size_bytes: 3928,
           created: "2026-08-14T01:08:26",
@@ -49,20 +51,21 @@ describe("managed-backup restore contract", () => {
       expect(backup.backupPath).toMatch(/\.bak_\d{8}_\d{6}$/);
       expect(backup.sha256).toBeTruthy();
       expect(backup.targetName).toBeTruthy();
+      expect(backup.targetPath).toBeTruthy();
     }
   });
 
   it("builds restore argv from the managed backup, never a shell string", () => {
     const backup = report.backups[0];
     const args = buildRestoreArgs({
-      target: backup.targetName,
+      target: backup.targetPath,
       backup: backup.backupPath,
       scope: "project",
       projectDir: "/p",
     });
     expect(args).toEqual([
       "restore",
-      "--target", "CLAUDE.md",
+      "--target", "/p/CLAUDE.md",
       "--backup", "/p/CLAUDE.md.bak_20260814_010826",
       "--scope", "project",
       "--project-dir", "/p",

@@ -8,7 +8,7 @@
 | claude-keysmith v7 | `v7` | 正式 Release | CLI（JSON 契约、事务恢复层、wrapper 动态重解析） |
 | Desktop GUI 0.1.0-beta.1 | `desktop-v0.1.0-beta.1` | **Pre-release** | 未签名桌面客户端 beta |
 
-以下为草稿正文；发布日期、产物链接与 SHA-256 在实际发布时填入。`desktop-v0.1.0-beta.1` 发布前必须完成 [`beta-acceptance.md`](beta-acceptance.md) 第二节全部 PENDING 条目。
+以下为草稿正文；发布日期、产物链接与 SHA-256 在实际发布时填入。`desktop-v0.1.0-beta.1` 是明确的未签名 beta：签名、公证、Authenticode 与自动更新缺失属于已接受且必须披露的限制，不替代 [`beta-acceptance.md`](beta-acceptance.md) 第二节中的真实发布门禁。
 
 ---
 
@@ -37,13 +37,19 @@ CLI 稳定性与可编程性版本。
 首个桌面客户端 beta。Tauri 2 + React 19，内嵌与 CLI 同源构建的 PyInstaller sidecar（`claude-keysmith v7`）。
 
 - 页面：Dashboard（sidecar 探测 / 状态）、三步 Deploy 向导、Manage（uninstall / 受控备份 restore / recover / repair）、Settings（zh-CN / en）。
-- 每一步写操作都走 CLI JSON 契约的 preview → confirm → execute，失败关闭：超时杀整棵进程树、输出超限拒绝解析、全局写互斥、关闭窗口排队等待在途操作。
-- 平台：macOS Apple Silicon（`.dmg`）与 Windows x64（NSIS currentUser 安装器 + WebView2 bootstrapper）。
+- 每一步写操作都走 CLI JSON 契约的 preview → confirm → execute，失败关闭：超时杀整棵进程树、输出超限拒绝解析、全局写互斥、关闭窗口排队等待在途操作。Manage restore 使用 `backups --json` 返回的绝对目标路径并由 CLI 复核 scope 内 target / backup 精确配对。
+- 目标产物：macOS Apple Silicon `.dmg`；Windows x64 NSIS currentUser 安装器 + WebView2 bootstrapper。Windows 原生构建与实体机验收仍为 PENDING，发布时只列出实际通过门禁并附校验信息的产物。
 
-**beta 边界（重要）**：
+**本次 beta 已接受的限制（重要）**：
 
-- 安装包**未签名**：macOS Gatekeeper 与 Windows SmartScreen 会拦截，需按下述指引手动放行（发布时补具体文案与截图）。
-- 无自动更新、无 Linux GUI、无 notarization / Authenticode。
-- 验收状态见 [`beta-acceptance.md`](beta-acceptance.md)；发现问题请开 issue。
+- 安装包无发行身份签名，且无 macOS notarization / Windows Authenticode。macOS 使用完整 ad-hoc 签名（无 hardened runtime），整包 codesign 校验通过但 `spctl` 拒绝；Windows SmartScreen 的实际提示仍待原生验收。发布时必须补充两平台实测文案、人工安装步骤、SHA-256 与 source commit。
+- 无自动更新；后续版本需手动下载、校验并安装。无 Linux GUI，Linux 继续使用 CLI。
+- 上述限制不单独阻塞这次明确标记为 `Pre-release` / `unsigned beta` 的版本，也不得被描述为已实现。
+
+**发布门禁**：
+
+- [`beta-acceptance.md`](beta-acceptance.md) 第二节全部 PENDING 条目必须完成并留存证据。macOS GUI UI 与真实进程强杀恢复 E2E 已通过；剩余门禁集中在 Gatekeeper 用户视角、真实 Claude 升级与 Windows 原生/用户视角验收。
+- 两个平台仅发布实际通过验收的候选，且 `BUILD_INFO.json` / `SHA256SUMS` 与安装器、sidecar 一致；tag、Release 与外发仍需单独明确授权。
+- 发现问题请开 issue。
 
 （发布时补：产物列表、字节数、SHA-256、Gatekeeper / SmartScreen 实测文案、source commit）

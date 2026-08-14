@@ -52,6 +52,7 @@ def _resource_base() -> Path:
 DEFAULT_EXAMPLE = _resource_base() / "examples" / "claude-project-rules.md"
 DEFAULT_APPEND_EXAMPLE = _resource_base() / "examples" / "claude-append-prompt.md"
 VERSION = "v7"
+ATOMIC_TEMP_MARKER = ".keysmith-tmp-"
 
 SHELL_BEGIN = "# >>> claude-keysmith runtime >>>"
 SHELL_END = "# <<< claude-keysmith runtime <<<"
@@ -122,6 +123,10 @@ def configure_utf8_stdio() -> None:
             pass
 
 
+def _atomic_temp_prefix(path: Path) -> str:
+    return f".{path.name}{ATOMIC_TEMP_MARKER}"
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Write UTF-8 text atomically inside the target directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +136,8 @@ def atomic_write_text(path: Path, content: str) -> None:
             "w",
             encoding="utf-8",
             dir=str(path.parent),
+            prefix=_atomic_temp_prefix(path),
+            suffix=".tmp",
             delete=False,
             newline="\n",
         )
@@ -1122,11 +1129,12 @@ class TransactionJournal:
     def _persist(self) -> None:
         atomic_write_text(self.path, json.dumps(self.record, ensure_ascii=False, indent=2) + "\n")
 
-    def log_step(self, step: Dict[str, Any]) -> None:
+    def log_step(self, step: Dict[str, Any]) -> Dict[str, Any]:
         entry = dict(step)
         entry.setdefault("at", _utc_now_iso())
         self.record["steps"].append(entry)
         self._persist()
+        return entry
 
     def log_backup(self, entry: Dict[str, Any]) -> None:
         self.record["backups"].append(dict(entry))
@@ -1171,8 +1179,9 @@ def journal_backup_after(journal: TransactionJournal, step: Dict[str, Any], back
 def journal_step_before(journal: TransactionJournal, action: str, path: Path, **extra: Any) -> Dict[str, Any]:
     step = {"action": action, "path": str(path), "before": file_evidence(path)}
     step.update(extra)
-    journal.log_step(step)
-    return step
+    # Return the exact entry stored in the journal so the matching after-state
+    # update is persisted instead of mutating a detached copy.
+    return journal.log_step(step)
 
 
 def journal_step_after(journal: TransactionJournal, step: Dict[str, Any], **extra: Any) -> None:
@@ -1507,6 +1516,44 @@ def load_journal(path: Path) -> Optional[Dict[str, Any]]:
     return record if isinstance(record, dict) else None
 
 
+def _atomic_temp_directories(paths: ScopePaths) -> List[Path]:
+    """Directories where scope-owned atomic writes can leave crash residue."""
+    directories = {paths.memory_file.parent, paths.keysmith_dir}
+    if paths.scope == "user":
+        home = resolve_home()
+        directories.add(home)
+        directories.add(home / ".claude")
+        shell_rc_override = os.environ.get("CLAUDE_KEYSMITH_SHELL_RC")
+        if shell_rc_override:
+            directories.add(Path(shell_rc_override).expanduser().parent)
+        else:
+            try:
+                directories.add(user_runtime_paths()["shell_rc"].parent)
+            except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
+    return sorted(directories, key=lambda item: str(item))
+
+
+def find_atomic_temp_residue(paths: ScopePaths) -> Tuple[List[Path], List[str]]:
+    """Find only temp files reserved by :func:`atomic_write_text`."""
+    residue: List[Path] = []
+    blockers: List[str] = []
+    for directory in _atomic_temp_directories(paths):
+        try:
+            entries = list(directory.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            blockers.append(f"无法检查原子写临时残留目录 {directory}: {exc}")
+            continue
+        for entry in entries:
+            name = entry.name
+            if name.startswith(".") and ATOMIC_TEMP_MARKER in name and name.endswith(".tmp"):
+                residue.append(entry)
+    residue.sort(key=lambda item: str(item))
+    return residue, blockers
+
+
 def inspect_recovery_state(paths: ScopePaths) -> Dict[str, Any]:
     journals: List[Dict[str, Any]] = []
     conflicts: List[str] = []
@@ -1525,6 +1572,8 @@ def inspect_recovery_state(paths: ScopePaths) -> Dict[str, Any]:
                 "pid": record.get("pid"),
             }
         )
+    atomic_temp_files, atomic_temp_blockers = find_atomic_temp_residue(paths)
+    conflicts.extend(atomic_temp_blockers)
     lock_path = scope_lock_path(paths)
     lock_present = lock_path.exists()
     live_lock = False
@@ -1538,11 +1587,13 @@ def inspect_recovery_state(paths: ScopePaths) -> Dict[str, Any]:
     return {
         "journals": journals,
         "journal_count": len(journals),
+        "atomic_temp_files": [str(path) for path in atomic_temp_files],
+        "atomic_temp_count": len(atomic_temp_files),
         "conflicts": conflicts,
         "lock_present": lock_present,
         "lock_live": live_lock,
-        "recovery_required": bool(journals or conflicts),
-        "must_recover_before_writes": bool(journals or conflicts),
+        "recovery_required": bool(journals or atomic_temp_files or conflicts),
+        "must_recover_before_writes": bool(journals or atomic_temp_files or conflicts),
     }
 
 
@@ -1565,10 +1616,12 @@ def enumerate_scope_backups(paths: ScopePaths, include_runtime: bool = True) -> 
                 continue
             seen.add(key)
             info = file_evidence(candidate)
+            target = candidate.parent / match.group("target")
             entries.append(
                 {
                     "backup_path": str(candidate),
                     "target_name": match.group("target"),
+                    "target_path": str(target),
                     "sha256": info["sha256"],
                     "size_bytes": info["size_bytes"],
                     "created": _backup_created_from_name(candidate.name),
@@ -1662,6 +1715,12 @@ def _blockers_for_recovery_residue(paths: ScopePaths, fresh_lock: Optional[Scope
     sweep cannot tear down a concurrent live writer.
     """
     blockers: List[str] = []
+    atomic_temp_files, atomic_temp_blockers = find_atomic_temp_residue(paths)
+    blockers.extend(atomic_temp_blockers)
+    if atomic_temp_files:
+        blockers.append(
+            f"检测到 {len(atomic_temp_files)} 个原子写临时残留；请先运行 recover 完成清理"
+        )
     for journal_path in find_journals(paths):
         record = load_journal(journal_path)
         if record is None:
@@ -1689,7 +1748,7 @@ def _blockers_for_recovery_residue(paths: ScopePaths, fresh_lock: Optional[Scope
         blockers.extend(_blockers_for_recovery_residue(paths))
     if _runtime_recovery_marker_present(paths):
         blockers.append("settings.json 标记了未完成的恢复（systemPrompt 回滚待确认）；请先运行 recover")
-    return blockers
+    return list(dict.fromkeys(blockers))
 
 
 def _emit_json_or_error(args: Any, build, printer=None) -> int:
@@ -2509,7 +2568,19 @@ def command_restore(args) -> int:
     report = _write_report_base("restore", args, None, None)
     report["target"] = {"file": str(target), "backup": str(backup)}
 
-    managed_mode = bool(is_keysmith_backup_for_target(target, backup))
+    scope_paths: Optional[ScopePaths] = None
+    if getattr(args, "scope", None):
+        try:
+            scope_paths = resolve_scope(args.scope, getattr(args, "project_dir", None))
+        except (FileNotFoundError, ValueError) as exc:
+            return _write_command_error(args, "restore", str(exc), extra={"target": report["target"], "managed": False})
+        managed_mode = any(
+            Path(entry["backup_path"]).resolve() == backup
+            and Path(entry["target_path"]).resolve() == target
+            for entry in enumerate_scope_backups(scope_paths, include_runtime=True)
+        )
+    else:
+        managed_mode = bool(is_keysmith_backup_for_target(target, backup))
     report["managed"] = managed_mode
 
     try:
@@ -2521,15 +2592,23 @@ def command_restore(args) -> int:
     except (FileNotFoundError, UnicodeDecodeError) as exc:
         return _write_command_error(args, "restore", str(exc), extra={"target": report["target"], "managed": managed_mode})
 
+    if getattr(args, "scope", None) and not managed_mode:
+        return _write_command_error(
+            args,
+            "restore",
+            "指定 scope 的 restore 只接受 backups --json 枚举出的目标与备份配对",
+            extra={"target": report["target"], "managed": False, "scope": args.scope},
+        )
+
     report["source"] = source_descriptor("backup", backup, backup_content)
     if target.exists():
         _add_action(report, "backup", target, "pre-restore safety backup of current target")
     _add_action(report, "write", target, f"restore content from {backup.name}")
 
     # Resolve the owning scope for managed restores (journal + fail-closed residue checks).
-    scope_paths: Optional[ScopePaths] = None
     if managed_mode:
-        scope_paths = _infer_scope_for_restore(args, target)
+        if scope_paths is None:
+            scope_paths = _infer_scope_for_restore(args, target)
         if scope_paths is not None:
             report["scope"] = scope_paths.scope
             if not preview_header_mode(args):
@@ -2745,6 +2824,11 @@ def command_recover(args) -> int:
             }
         )
 
+    atomic_temp_files, atomic_temp_blockers = find_atomic_temp_residue(paths)
+    report["blockers"].extend(atomic_temp_blockers)
+    for temp_path in atomic_temp_files:
+        residue.append({"kind": "atomic_temp", "path": str(temp_path)})
+
     settings_marker, settings_path, _settings, settings_marker_blocker = _runtime_recovery_marker_status(paths)
     if settings_marker:
         residue.append({"kind": "settings_recovery_marker", "path": str(settings_path)})
@@ -2771,6 +2855,15 @@ def command_recover(args) -> int:
     # Preview must reach the same verdict as execute: dry-run every journal so an
     # unrecoverable plan blocks before the user confirms (never mutates state).
     planned_repairs: List[Dict[str, Any]] = []
+    for temp_path in atomic_temp_files:
+        planned_repairs.append(
+            {
+                "journal": None,
+                "action": "cleanup-atomic-temp",
+                "path": str(temp_path),
+                "detail": "remove a keysmith-owned atomic-write temp file left by an interrupted process",
+            }
+        )
     for journal_path, record in journal_records:
         if record.get("state") == "committed":
             _plan, plan_blockers = finish_committed_journal(record)
@@ -2864,6 +2957,19 @@ def command_recover(args) -> int:
                 _add_action(report, "cleanup-journal", journal_path, "journal completed and removed")
                 if not use_json:
                     print(f"[清理] {journal_path.name} 已完成并移除")
+
+        if not report["blockers"]:
+            for temp_path in atomic_temp_files:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    report["blockers"].append(f"无法清理原子写临时残留 {temp_path}: {exc}")
+                else:
+                    _add_action(report, "cleanup-atomic-temp", temp_path, "interrupted atomic-write temp file removed")
+                    if not use_json:
+                        print(f"[清理] 原子写临时残留已移除: {temp_path}")
 
         if settings_marker and not report["blockers"]:
             marker_present, settings_path, settings, marker_blocker = _runtime_recovery_marker_status(paths)

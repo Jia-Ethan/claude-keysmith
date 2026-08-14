@@ -9,17 +9,19 @@
 **`claude-keysmith/v1` JSON 契约：**
 
 - `install` / `status` / `doctor` / `uninstall` / `restore` 支持 `--json` 稳定输出；写操作区分 `preview`（默认）与 `execute`（`--yes`）两种 mode，统一携带 `actions` / `warnings` / `blockers` / `backups` 证据列表。`blockers` 非空或 `ok:false` 即失败关闭。
-- 新增只读命令 `backups --scope … --json`：只枚举通过命名规则校验的 keysmith 受控备份（`<target>.bak_YYYYMMDD_HHMMSS…`），供受控恢复选择。
+- 新增只读命令 `backups --scope … --json`：只枚举通过命名规则校验的 keysmith 受控备份（`<target>.bak_YYYYMMDD_HHMMSS…`），并返回绝对 `target_path` 供受控恢复选择。
 - 新增命令 `recover --scope …`：预览中断事务的残留与修复计划，`--yes` 执行恢复，重复执行幂等。
 - `status --json` 在保留全部历史扁平键的同时新增结构化块：`presence`、`alignment`、`source_identity`、`runtime_readiness`、`recovery_state`。
-- `restore` 新增可选 `--scope` / `--project-dir` 与 `--json`；受控备份（同目录、命名匹配的 `*.bak_*`）恢复走 journal/lock 事务，恢复前再生成 `*_pre_restore` 安全备份。
+- `restore` 新增可选 `--scope` / `--project-dir` 与 `--json`；带 scope 时只接受该 scope 的 `backups --json` 枚举出的 target / backup 精确配对，恢复走 journal/lock 事务并先生成 `*_pre_restore` 安全备份；无 scope 才保留 CLI 高级非受控恢复。
 - `doctor --json` 键集合固定为 9 个不变，永不输出 Base URL / token / cookie / 非目标 settings 字段。契约参考见 `docs/json-contract.md`。
 
 **Durable journal + write lock：**
 
 - 所有写路径（install / uninstall / 受控 restore）由 scope 本地的排他锁（`.keysmith.lock`，O_EXCL，含 `{pid,label,acquired_at}`）与持久化事务日志（`.journal-<uuid>.json`，`claude-keysmith-journal/v1`）保护；每个 mutation 前后原子落盘 before/after 指纹。
 - 两阶段 `pending` → `committed`：commit 前中断逆序回滚到之前的状态（恢复指纹校验过的备份，或删除事务新建文件）；commit 后永不反转，只做残留核验，核验干净的 journal 被下一次写入或 `recover` 消费。
-- 失败关闭：活跃他方锁、损坏 journal、未知修改（指纹既不等于 before 也不等于 after）、回滚目标被重建、找不到匹配备份等情况一律阻塞并保留证据。设计见 `docs/transaction-recovery.md`。
+- 修复 mutation 后指纹只更新了临时字典、没有写回实际 journal 的事务证据缺口；强杀后 recovery 现在能依据持久化 after 指纹精确判断，第三方后续修改仍会失败关闭。
+- 原子写临时文件采用 keysmith 专属命名；强杀遗留会让 status 标记 recovery-required、阻塞新写入，并由 recover 只读预览后定向清理。
+- 失败关闭：活跃他方锁、损坏 journal、原子临时残留、未知修改（指纹既不等于 before 也不等于 after）、回滚目标被重建、找不到匹配备份等情况一律阻塞并保留证据。设计见 `docs/transaction-recovery.md`。
 
 **unix wrapper 动态重解析（VERSION v6 → v7）：**
 
@@ -36,12 +38,13 @@
 - 页面：Dashboard / 三步 Deploy 向导 / Manage（uninstall、受控备份 restore、recover、repair）/ Settings。
 - 进程边界：argv 数组调用（无 shell 拼接）、stdout/stderr 各 2 MiB 上限（截断失败关闭）、超时杀整棵进程树（unix 进程组 `kill(-pid)`；windows `taskkill /T /F`）、`kill_on_drop`。
 - 单实例、全局写互斥（操作租约；`execute*` 写路径经 `cliRunExclusive` 持有独占租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
-- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 配置就绪但 **PENDING 原生 runner 验收**；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
+- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 配置就绪但 **PENDING 原生 runner 验收**；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。前述缺失是本次 `unsigned beta` 明确披露的限制，不替代 UI、强杀恢复与 Windows 原生验收等真实发布门禁。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
 
 ### 发布候选构建链
 
-- 新增手动触发的 `gui-release-candidate` workflow（`permissions: contents: read`，无 secrets）：Windows x64 与 macOS ARM64（已核实 GitHub 托管 `macos-latest` 为 arm64 镜像并在 job 内断言）先跑 CLI / 前端 / Rust 全部门禁，再原生构建 PyInstaller sidecar 与 NSIS / DMG 候选包，上传安装器、sidecar、`BUILD_INFO.json`（GUI 版本 / CLI 版本 / source commit / 字节数 / SHA-256 / signed:false）与 `SHA256SUMS` 为 artifact；不打 tag、不建 Release、不发布任何产物。
-- `docs/beta-acceptance.md` 重写为证据驱动清单：只勾选已取得命令级证据的条目（含失败关闭专项：强杀恢复链、committed 不反撤、活锁拒绝、预览纯只读、租约边界），Gatekeeper / Windows / UI 端到端等未取证据项保持 PENDING。
+- `gui-release-candidate` workflow 仅用 `contents: read` 且无 secrets：main PR 自动生成 `release_eligible:false` 的验证 artifact；合并后必须在 main 上传入精确 `expected_sha` 才能生成 `release_eligible:true` 候选。Windows x64 与 macOS ARM64 先跑 CLI / 前端 / Rust 全部门禁，再原生构建 PyInstaller sidecar 与 NSIS / DMG，核验安装/卸载或挂载、版本、架构、签名状态、source commit 与哈希后上传 artifact；不打 tag、不建 Release。
+- `docs/beta-acceptance.md` 记录 125 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组强杀后的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链，以及 macOS GUI Dashboard / Deploy / Manage / 操作中关闭实体机验收；未取证的 Gatekeeper 用户视角与 Windows 项继续保持 PENDING。
+- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；真正阻塞 beta 外发的是平台候选可追溯性与 `docs/beta-acceptance.md` 中尚未完成的实体机、UI、强杀恢复和 Windows 原生验收。
 - `docs/reference.md` 修正残留的 “v6 当前模板” 为 v7；新增 `docs/release-notes-drafts.md`（v7 与 desktop-v0.1.0-beta.1 同批次双 Release 草稿，未写发布日期）。
 
 ### Review 修复（本轮）

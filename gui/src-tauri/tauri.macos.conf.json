@@ -1,5 +1,10 @@
 {
   "bundle": {
-    "targets": ["app", "dmg"]
+    "targets": ["app", "dmg"],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": false
+    }
   }
 }

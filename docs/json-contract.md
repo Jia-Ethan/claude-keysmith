@@ -52,7 +52,7 @@
 | `created` | 从备份文件名解析出的 ISO 时间；preview 为 `null` |
 | `planned` | 仅 preview 条目出现且为 `true` |
 
-`actions[].action` 的取值随命令不同：`backup` / `write` / `remove` / `migrate` / `align-settings` / `install-wrapper` / `remove-wrapper` / `clear-recovery-marker` / `reclaim-lock` / `restore-moved` / `cleanup` / `cleanup-journal` / `noop`。
+`actions[].action` 的取值随命令不同：`backup` / `write` / `remove` / `migrate` / `align-settings` / `install-wrapper` / `remove-wrapper` / `clear-recovery-marker` / `reclaim-lock` / `restore-moved` / `cleanup` / `cleanup-journal` / `cleanup-atomic-temp` / `noop`。
 
 ## `install --json`
 
@@ -159,12 +159,12 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
 
 ## `restore --json`
 
-`--target` 与 `--backup` 必填；`--scope` / `--project-dir` 可选。新增字段：
+`--target` 与 `--backup` 必填；`--scope` / `--project-dir` 可选。传入 `--scope` 时，`target` / `backup` 必须与该 scope 的 `backups --json` 输出中的 `target_path` / `backup_path` 精确配对，否则在 preview 与 execute 都失败关闭；不传 `--scope` 才保留 CLI 高级用户使用的非受控恢复路径。新增字段：
 
 | 字段 | 说明 |
 |---|---|
 | `target.file` / `target.backup` | 目标与备份路径 |
-| `managed` | 备份是否通过 keysmith 命名规则校验（`<target>.bak_YYYYMMDD_HHMMSS…` 且与目标同目录）。`managed: true` 的恢复走 journal/lock 事务；`false` 是 CLI-only 自由恢复路径 |
+| `managed` | 带 scope 时表示 target / backup 是否为 `backups --json` 枚举出的精确配对；无 scope 时按 `<target>.bak_YYYYMMDD_HHMMSS…` 同目录规则判断。`managed: true` 的恢复走 journal/lock 事务；`false` 仅用于无 scope 的 CLI 高级恢复路径 |
 | `recovery_marker_cleared` | 受控恢复 user scope `settings.json` 且恢复的 `systemPrompt` 与 `system-prompt.md` 一致时，清除待恢复标记并置 `true` |
 
 执行示例（受控恢复）：
@@ -218,7 +218,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
 | `alignment` | `import_block_present`、`import_target`、`settings_system_prompt_aligned`、`shell_wrapper_current`、`shell_wrapper_managed` |
 | `source_identity` | `kind`（`deployed`/`missing`）、`instruction_sha256`、`instruction_size_bytes`、`drift`、`system_prompt_sha256`、`settings_system_prompt_drift` |
 | `runtime_readiness` | `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`upgrade_required`、`legacy_launcher_detected`、`legacy_launcher_paths`、`legacy_launcher_conflict`、`legacy_launcher_conflict_paths`、`runtime_ready`（仅 user scope `--runtime`） |
-| `recovery_state` | `journals`、`journal_count`、`conflicts`、`lock_present`、`lock_live`、`recovery_required`、`must_recover_before_writes` |
+| `recovery_state` | `journals`、`journal_count`、`atomic_temp_files`、`atomic_temp_count`、`conflicts`、`lock_present`、`lock_live`、`recovery_required`、`must_recover_before_writes` |
 | `runtime` | 完整 runtime 状态（仅 user scope `--runtime`；非 user scope 为 `{supported: false, reason: ...}`） |
 
 `recovery_state.journals[]` 条目：`{journal_path, journal_id, operation, state, started_at, pid}`。`runtime_ready` 只有在 prompt 文件完整、settings 对齐、wrapper 为当前 v7 模板、上游入口存在且无旧 launcher 冲突时才为 `true`。
@@ -240,7 +240,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
   "presence": {"memory_file": false, "instruction_file": false, "import_block": false, "system_prompt": false, "append_prompt": false, "settings_file": false, "shell_wrapper": false},
   "alignment": {"import_block_present": false, "import_target": "@keysmith/claude-project-rules.md", "settings_system_prompt_aligned": false, "shell_wrapper_current": false, "shell_wrapper_managed": false},
   "source_identity": {"kind": "missing", "instruction_sha256": null, "instruction_size_bytes": null, "drift": null, "system_prompt_sha256": null, "settings_system_prompt_drift": null},
-  "recovery_state": {"journals": [], "journal_count": 0, "conflicts": [], "lock_present": false, "lock_live": false, "recovery_required": false, "must_recover_before_writes": false},
+  "recovery_state": {"journals": [], "journal_count": 0, "atomic_temp_files": [], "atomic_temp_count": 0, "conflicts": [], "lock_present": false, "lock_live": false, "recovery_required": false, "must_recover_before_writes": false},
   "runtime_readiness": {"upstream_candidates": [], "upstream_path": null, "upstream_exists": false, "shell_wrapper_current": false, "upgrade_required": true, "legacy_launcher_detected": false, "legacy_launcher_paths": [], "legacy_launcher_conflict": false, "legacy_launcher_conflict_paths": [], "runtime_ready": false}
 }
 ```
@@ -251,7 +251,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
 
 | 字段 | 说明 |
 |---|---|
-| `backups[]` | `{backup_path, target_name, sha256, size_bytes, created, kind}` |
+| `backups[]` | `{backup_path, target_name, target_path, sha256, size_bytes, created, kind}`；GUI 必须把绝对 `target_path` 原样传给 scoped restore，不能只传 basename |
 | `count` | 条目数 |
 | `scope_root` | scope 根目录 |
 
@@ -268,6 +268,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
     {
       "backup_path": "~/.claude/CLAUDE.md.bak_20260814_015807",
       "target_name": "CLAUDE.md",
+      "target_path": "~/.claude/CLAUDE.md",
       "sha256": "9e6eba77…6c5ffc04",
       "size_bytes": 146,
       "created": "2026-08-14T01:58:07",
@@ -288,8 +289,8 @@ GUI 的恢复界面只从这里取备份列表，不提供任意 target/backup �
 
 | 字段 | 说明 |
 |---|---|
-| `residue[]` | 发现的残留：`{kind: "journal", journal_path, journal_id, operation, state, started_at, pid, steps}`、`{kind: "corrupt_journal", journal_path}`、`{kind: "settings_recovery_marker", path}` |
-| `planned_repairs[]` | 计划修复：`rollback-pending`（回滚未提交事务）、`finalize-committed`（核验已提交事务并清理 journal）、`clear-settings-marker`（settings 对齐后清除待恢复标记） |
+| `residue[]` | 发现的残留：`{kind: "journal", journal_path, journal_id, operation, state, started_at, pid, steps}`、`{kind: "corrupt_journal", journal_path}`、`{kind: "atomic_temp", path}`、`{kind: "settings_recovery_marker", path}` |
+| `planned_repairs[]` | 计划修复：`rollback-pending`（回滚未提交事务）、`finalize-committed`（核验已提交事务并清理 journal）、`cleanup-atomic-temp`（删除 keysmith 专属原子写临时残留）、`clear-settings-marker`（settings 对齐后清除待恢复标记） |
 
 无残留示例：
 

@@ -16,6 +16,7 @@
 |---|---|
 | `.keysmith.lock` | 排他写锁，O_EXCL 创建，内容为 `{schema, pid, label, acquired_at}` |
 | `.journal-<uuid>.json` | 单个事务的持久化日志（`schema: "claude-keysmith-journal/v1"`） |
+| `.<target>.keysmith-tmp-*.tmp` | `atomic_write_text` 的专属临时文件；正常路径会 rename 或清理，强杀遗留由 recovery gate 阻塞并交给 `recover` 清理 |
 
 锁和 journal 都在 scope 本地，互不干扰；同一 scope 同一时刻只允许一个写事务。
 
@@ -56,8 +57,9 @@ journal 在每次真实写入前创建，**每个 mutation 前后都原子落盘
 1. 存在 **pending** journal ⇒ 阻塞，提示先运行 `recover`。
 2. 存在 **committed** journal ⇒ 现场核验；有残留 ⇒ 阻塞；无残留 ⇒ 消费 journal 后继续。
 3. journal 无法解析（损坏）⇒ 阻塞，证据原样保留，不做任何修复尝试。
-4. 刚回收的失效锁 ⇒ 在锁内重复一次完整扫描（防并发写者）。
-5. user scope `settings.json` 存在 `"claude-keysmith recovery marker"` 键 ⇒ 阻塞（`systemPrompt` 回滚待确认）。唯一例外：受控恢复 user scope `settings.json` 本身就是该标记的修复手段，会过滤掉这一条 blocker（其余 blocker 仍然生效）。
+4. 存在 keysmith 专属原子写临时残留 ⇒ 阻塞，提示先运行 `recover`；不匹配专属命名的用户文件不参与扫描。
+5. 刚回收的失效锁 ⇒ 在锁内重复一次完整扫描（防并发写者）。
+6. user scope `settings.json` 存在 `"claude-keysmith recovery marker"` 键 ⇒ 阻塞（`systemPrompt` 回滚待确认）。唯一例外：受控恢复 user scope `settings.json` 本身就是该标记的修复手段，会过滤掉这一条 blocker（其余 blocker 仍然生效）。
 
 preview 模式（无 `--yes`）完全不触碰文件系统，不检查门槛、不取锁。
 
@@ -74,6 +76,7 @@ preview 模式（无 `--yes`）完全不触碰文件系统，不检查门槛、�
 - 活跃的他方锁（live PID）。
 - 损坏的 journal ⇒ 保留证据并阻塞。
 - 已提交事务的迁移目标被重建 ⇒ 保留并报告。
+- keysmith 专属原子写临时残留未先完成恢复清理。
 
 ## `recover` 用法
 
@@ -92,14 +95,15 @@ python3 claude-instruct.py recover --scope user --yes --json
 1. 失效锁：报告 `reclaim-lock` 动作，由随后的 `ScopeWriteLock` 获取自然回收；活跃锁 ⇒ blocker，拒绝在写入进行中恢复。
 2. pending journal ⇒ 逆序回滚（见上）；全部步骤干净后删除 journal（`cleanup-journal`）。
 3. committed journal ⇒ 核验残留，干净则删除 journal。
-4. settings 恢复标记存在且没有其它 blocker ⇒ 校验 `settings.systemPrompt` 与 `~/.claude/keysmith/system-prompt.md` 一致后清除标记；不一致 ⇒ blocker，提示先用 `backups` 选受控备份执行 `restore` 再运行 `recover`。
-5. 任一 journal 有 blocker ⇒ 该 journal 与证据保留，整体 `ok: false`、`exit_status: 1`。
+4. keysmith 专属原子写临时残留且没有其它 blocker ⇒ 删除临时文件并记录 `cleanup-atomic-temp`；其它文件不受影响。
+5. settings 恢复标记存在且没有其它 blocker ⇒ 校验 `settings.systemPrompt` 与 `~/.claude/keysmith/system-prompt.md` 一致后清除标记；不一致 ⇒ blocker，提示先用 `backups` 选受控备份执行 `restore` 再运行 `recover`。
+6. 任一 journal 有 blocker ⇒ 该 journal 与证据保留，整体 `ok: false`、`exit_status: 1`。
 
 ## 受控与非受控 `restore` 的事务边界
 
-`restore` 只在备份通过受控判定（`is_keysmith_backup_for_target`：同目录 + `<target>.bak_YYYYMMDD_HHMMSS…` 命名）且能推断出所属 scope 时，才走 journal + 写锁事务（`managed: true`）。
+带 `--scope` 的 `restore` 只接受该 scope 的 `backups --json` 实际枚举出的 `target_path` / `backup_path` 精确配对；任一项被替换、只传 basename 或备份已移出受控目录都会在 preview 与 execute 失败关闭。配对成立时走 journal + 写锁事务（`managed: true`）。GUI 始终使用这条路径。
 
-任意路径的备份（`managed: false`）仍然会先为当前目标生成 `*_pre_restore` 安全备份，但**不建 journal、不取 scope 锁**——因为目标不属于任何 keysmith scope，无法定位事务目录。它不参与失败关闭门禁，也不会被 `recover` 回滚。GUI 只从 `backups --json` 枚举的受控备份发起恢复，不暴露非受控路径。
+不传 `--scope` 时保留 CLI 高级恢复能力：同目录且匹配 `<target>.bak_YYYYMMDD_HHMMSS…` 命名的备份仍可推断为受控恢复；其它任意路径备份为 `managed: false`，会先生成 `*_pre_restore` 安全备份，但**不建 journal、不取 scope 锁**，也不参与失败关闭门禁或 `recover` 回滚。GUI 不暴露这条非受控路径。
 
 ## runtime uninstall 与 settings 语义
 
@@ -110,10 +114,11 @@ python3 claude-instruct.py backups --scope user --json          # 找到 setting
 python3 claude-instruct.py restore \
   --target ~/.claude/settings.json \
   --backup ~/.claude/settings.json.bak_YYYYMMDD_HHMMSS_pre_runtime \
+  --scope user \
   --yes
 ```
 
-受控恢复（`managed: true`，即备份名匹配 `<target>.bak_*` 且与目标同目录）走 journal/lock；恢复前会再为当前 `settings.json` 生成 `*_pre_restore` 安全备份。GUI 只暴露这条受控路径，不提供任意 target/backup 对的自由恢复。
+受控恢复（`managed: true`，带 scope 时必须匹配 `backups --json` 枚举结果）走 journal/lock；恢复前会再为当前 `settings.json` 生成 `*_pre_restore` 安全备份。GUI 只暴露这条受控路径，不提供任意 target/backup 对的自由恢复。
 
 ## 与 GUI 的关系
 

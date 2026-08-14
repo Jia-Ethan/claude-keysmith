@@ -295,6 +295,7 @@ export function parseBackupsReport(output) {
     backups: asArray(doc.backups).map((b) => ({
       backupPath: typeof b?.backup_path === "string" ? b.backup_path : "",
       targetName: typeof b?.target_name === "string" ? b.target_name : "",
+      targetPath: typeof b?.target_path === "string" ? b.target_path : "",
       sha256: typeof b?.sha256 === "string" ? b.sha256 : null,
       sizeBytes: typeof b?.size_bytes === "number" ? b.size_bytes : null,
       created: typeof b?.created === "string" ? b.created : null,

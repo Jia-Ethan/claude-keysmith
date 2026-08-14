@@ -528,6 +528,85 @@ mod tests {
         panic!("descendant process survived timeout");
     }
 
+    #[cfg(windows)]
+    fn powershell_invocation(script: &str) -> CliInvocation {
+        let program = find_program_in_path("powershell.exe")
+            .expect("Windows PowerShell must be available on supported Windows hosts");
+        CliInvocation {
+            path: program.clone(),
+            program,
+            prefix_args: vec![
+                OsString::from("-NoLogo"),
+                OsString::from("-NoProfile"),
+                OsString::from("-NonInteractive"),
+                OsString::from("-ExecutionPolicy"),
+                OsString::from("Bypass"),
+                OsString::from("-Command"),
+                OsString::from(script),
+            ],
+            runtime: CliRuntime::Executable,
+        }
+    }
+
+    #[cfg(windows)]
+    async fn windows_process_exists(pid: u32) -> bool {
+        let script = format!(
+            "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+        );
+        powershell_invocation(&script)
+            .command()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(windows)]
+    async fn assert_windows_process_stopped(pid: u32) {
+        for _ in 0..40 {
+            if !windows_process_exists(pid).await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("process {pid} survived taskkill /T /F");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn timeout_terminates_parent_and_descendant_with_taskkill() {
+        let invocation = powershell_invocation(
+            r#"
+$child = Start-Process -FilePath powershell.exe -ArgumentList '-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60' -PassThru
+[Console]::Out.WriteLine("$PID $($child.Id)")
+[Console]::Out.Flush()
+Wait-Process -Id $child.Id
+"#,
+        );
+
+        let output = run_invocation(&invocation, &[], Duration::from_secs(5))
+            .await
+            .expect("timeout result");
+        assert!(output.timed_out);
+
+        let pids = output
+            .stdout
+            .split_whitespace()
+            .map(|value| value.parse::<u32>().expect("PowerShell process id"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pids.len(),
+            2,
+            "unexpected PowerShell output: {}",
+            output.stdout
+        );
+        assert_ne!(pids[0], pids[1]);
+
+        assert_windows_process_stopped(pids[0]).await;
+        assert_windows_process_stopped(pids[1]).await;
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn oversized_output_fails_closed() {
@@ -542,6 +621,20 @@ mod tests {
         };
 
         let error = run_invocation(&invocation, &[], Duration::from_secs(5))
+            .await
+            .expect_err("oversized output must fail closed");
+        assert!(error.contains("stdout"));
+        assert!(error.contains("输出不完整"));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn oversized_output_fails_closed_without_panicking() {
+        let invocation = powershell_invocation(
+            "[Console]::Out.Write(('x' * (3 * 1024 * 1024))); [Console]::Out.Flush()",
+        );
+
+        let error = run_invocation(&invocation, &[], Duration::from_secs(15))
             .await
             .expect_err("oversized output must fail closed");
         assert!(error.contains("stdout"));

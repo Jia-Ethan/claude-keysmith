@@ -362,9 +362,9 @@ export function Manage() {
                           </div>
                         </div>
                         <Button size="sm" variant="outline" className="shrink-0"
-                          disabled={busy || operationInProgress || recoveryRequired}
+                          disabled={busy || operationInProgress || recoveryRequired || !backup.targetPath}
                           onClick={() => startPreview("restore", {
-                            target: backup.targetName,
+                            target: backup.targetPath,
                             backup: backup.backupPath,
                             scope,
                             projectDir: projectDir.trim(),

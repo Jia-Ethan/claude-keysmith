@@ -375,6 +375,7 @@ describe("parseBackupsReport", () => {
       backups: [{
         backup_path: "/p/CLAUDE.md.bak_20260814_010826",
         target_name: "CLAUDE.md",
+        target_path: "/p/CLAUDE.md",
         sha256: "abc",
         size_bytes: 154,
         created: "2026-08-14T01:08:26",
@@ -386,7 +387,7 @@ describe("parseBackupsReport", () => {
     };
     const model = parseBackupsReport(output(backups));
     expect(model.count).toBe(1);
-    expect(model.backups[0]).toMatchObject({ targetName: "CLAUDE.md", kind: "memory", sizeBytes: 154 });
+    expect(model.backups[0]).toMatchObject({ targetName: "CLAUDE.md", targetPath: "/p/CLAUDE.md", kind: "memory", sizeBytes: 154 });
   });
 
   it("maps an empty backup list", () => {
@@ -416,9 +417,9 @@ describe("arg builders (array-only, never shell strings)", () => {
       .toEqual(["status", "--scope", "local", "--project-dir", "/p"]);
   });
 
-  it("buildRestoreArgs passes target and backup verbatim", () => {
-    expect(buildRestoreArgs({ target: "CLAUDE.md", backup: "/p/CLAUDE.md.bak_1", scope: "project", projectDir: "/p" }))
-      .toEqual(["restore", "--target", "CLAUDE.md", "--backup", "/p/CLAUDE.md.bak_1", "--scope", "project", "--project-dir", "/p"]);
+  it("buildRestoreArgs passes the absolute managed target and backup verbatim", () => {
+    expect(buildRestoreArgs({ target: "/p/CLAUDE.md", backup: "/p/CLAUDE.md.bak_1", scope: "project", projectDir: "/p" }))
+      .toEqual(["restore", "--target", "/p/CLAUDE.md", "--backup", "/p/CLAUDE.md.bak_1", "--scope", "project", "--project-dir", "/p"]);
   });
 
   it("buildBackupsArgs and buildRecoverArgs", () => {
