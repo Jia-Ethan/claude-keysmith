@@ -396,6 +396,115 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
     assert '"runtime_ready": true' in status.stdout or '"runtime_ready": true' in status.stdout.replace("True", "true")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="zsh runtime is not supported on Windows")
+def test_zsh_runtime_status_accepts_missing_stale_fast_path_after_upgrade(tmp_path):
+    home = tmp_path / "home"
+    first_bin = tmp_path / "versions" / "1" / "bin"
+    second_bin = tmp_path / "versions" / "2" / "bin"
+    first_bin.mkdir(parents=True)
+    second_bin.mkdir(parents=True)
+    first_claude = first_bin / "claude"
+    second_claude = second_bin / "claude"
+    first_claude.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    second_claude.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    first_claude.chmod(0o755)
+    second_claude.chmod(0o755)
+    base_path = os.environ.get("PATH", "")
+
+    install = run_cli(
+        ["install", "--scope", "user", "--runtime", "--yes"],
+        home=home,
+        extra_env={
+            "CLAUDE_KEYSMITH_SHELL": "zsh",
+            "PATH": os.pathsep.join((str(first_bin), base_path)),
+        },
+        check=False,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+    wrapper = (home / ".zshrc").read_text(encoding="utf-8")
+    assert str(first_claude.resolve()) in wrapper
+
+    first_bin.parent.rename(first_bin.parent.with_name("1.retired"))
+    status = json.loads(
+        run_cli(
+            ["status", "--scope", "user", "--runtime", "--json"],
+            home=home,
+            extra_env={
+                "CLAUDE_KEYSMITH_SHELL": "zsh",
+                "PATH": os.pathsep.join((str(second_bin), base_path)),
+            },
+        ).stdout
+    )["runtime"]
+
+    assert status["upstream_path"] == str(second_claude.resolve())
+    assert status["shell_wrapper_current"] is True
+    assert status["runtime_ready"] is True
+    assert status["upgrade_required"] is False
+
+    zshrc = home / ".zshrc"
+    drifted_wrapper = wrapper.replace("    return 127", "    return 126", 1)
+    assert drifted_wrapper != wrapper
+    zshrc.write_text(drifted_wrapper, encoding="utf-8")
+    drifted_status = json.loads(
+        run_cli(
+            ["status", "--scope", "user", "--runtime", "--json"],
+            home=home,
+            extra_env={
+                "CLAUDE_KEYSMITH_SHELL": "zsh",
+                "PATH": os.pathsep.join((str(second_bin), base_path)),
+            },
+        ).stdout
+    )["runtime"]
+    assert drifted_status["shell_wrapper_current"] is False
+    assert drifted_status["runtime_ready"] is False
+    assert drifted_status["upgrade_required"] is True
+
+    installed_block = claude_instruct.shell_block_pattern().search(wrapper).group(0)
+    expected_block = installed_block.replace(
+        f'  entry="{first_claude.resolve()}"',
+        f'  entry="{second_claude.resolve()}"',
+        1,
+    )
+
+    def block_with_entry(raw):
+        return expected_block.replace(
+            f'  entry="{second_claude.resolve()}"',
+            f'  entry="{raw}"',
+            1,
+        )
+
+    missing_literal = tmp_path / "retired version" / "claude-旧"
+    assert claude_instruct.shell_wrapper_is_current(
+        block_with_entry(missing_literal), expected_block, "zsh"
+    )
+
+    existing_file = tmp_path / "existing-claude"
+    existing_file.write_text("fixture\n", encoding="utf-8")
+    existing_dir = tmp_path / "existing-dir"
+    existing_dir.mkdir()
+    dangling_link = tmp_path / "dangling-claude"
+    dangling_link.symlink_to(tmp_path / "missing-target")
+    rejected_entries = (
+        "claude",
+        "~/retired/claude",
+        f"{tmp_path}/$(id)/claude",
+        f"{tmp_path}/`id`/claude",
+        str(tmp_path / "retired\\version" / "claude"),
+        str(tmp_path / "bad\tname" / "claude"),
+        str(existing_file),
+        str(existing_dir),
+        str(dangling_link),
+    )
+    for raw in rejected_entries:
+        assert not claude_instruct.shell_wrapper_is_current(
+            block_with_entry(raw), expected_block, "zsh"
+        )
+
+    assert not claude_instruct.shell_wrapper_is_current(
+        installed_block, expected_block, "powershell"
+    )
+
+
 def test_runtime_install_sets_max_tokens_only_when_explicit(tmp_path):
     home = tmp_path / "home"
     claude_dir = home / ".claude"
@@ -843,6 +952,33 @@ def test_legacy_launcher_migration_never_overwrites_preoccupied_backup(tmp_path)
     assert not legacy_cmd.exists()
 
 
+def test_legacy_launcher_migration_preserves_same_content_backup_raced_after_plan(tmp_path):
+    home = tmp_path / "home"
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    legacy_ps1 = local_bin / "claude.ps1"
+    legacy_cmd = local_bin / "claude.cmd"
+    ps1_content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
+    legacy_ps1.write_text(ps1_content, encoding="utf-8")
+    legacy_cmd.write_bytes(
+        b'@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
+    )
+    plan = claude_instruct.plan_legacy_launcher_migration(home, "20260807_120000")
+    raced_backup = Path(plan[0]["backup"])
+    raced_backup.write_text(ps1_content, encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="拒绝覆盖"):
+        claude_instruct.migrate_legacy_launchers(
+            home,
+            "20260807_120000",
+            migration_plan=plan,
+        )
+
+    assert legacy_ps1.read_text(encoding="utf-8") == ps1_content
+    assert raced_backup.read_text(encoding="utf-8") == ps1_content
+    assert legacy_cmd.exists()
+
+
 def test_legacy_launcher_migration_rolls_back_first_file_when_second_move_fails(
     tmp_path, monkeypatch
 ):
@@ -855,14 +991,14 @@ def test_legacy_launcher_migration_rolls_back_first_file_when_second_move_fails(
     cmd_content = '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
     legacy_ps1.write_text(ps1_content, encoding="utf-8")
     legacy_cmd.write_bytes(cmd_content.encode("utf-8"))
-    real_replace = claude_instruct.os.replace
+    real_move = claude_instruct._move_file_no_overwrite
 
     def fail_cmd_migration(source, target):
         if Path(source) == legacy_cmd and ".bak_20260807_120000_pre_v6" in str(target):
             raise OSError("cmd migration failed")
-        return real_replace(source, target)
+        return real_move(Path(source), Path(target))
 
-    monkeypatch.setattr(claude_instruct.os, "replace", fail_cmd_migration)
+    monkeypatch.setattr(claude_instruct, "_move_file_no_overwrite", fail_cmd_migration)
 
     with pytest.raises(OSError, match="cmd migration failed"):
         claude_instruct.migrate_legacy_launchers(home, "20260807_120000")
@@ -871,6 +1007,34 @@ def test_legacy_launcher_migration_rolls_back_first_file_when_second_move_fails(
     assert legacy_cmd.read_bytes() == cmd_content.encode("utf-8")
     assert not list(local_bin.glob("claude.ps1.bak_*_pre_v6*"))
     assert not list(local_bin.glob("claude.cmd.bak_*_pre_v6*"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks is not reliably permitted on Windows runners")
+def test_runtime_install_refuses_dangling_legacy_launcher_symlink_before_any_write(tmp_path):
+    home = tmp_path / "home"
+    profile = home / "profile.ps1"
+    upstream = tmp_path / "upstream" / "claude.exe"
+    upstream.parent.mkdir(parents=True)
+    upstream.write_bytes(b"fixture")
+    dangling = home / ".local" / "bin" / "claude.ps1"
+    dangling.parent.mkdir(parents=True)
+    dangling.symlink_to(dangling.parent / "missing-upstream.ps1")
+    env = windows_runtime_env(home, profile, CLAUDE_KEYSMITH_CLAUDE_BIN=upstream)
+
+    result = run_cli(
+        ["install", "--scope", "user", "--runtime", "--yes", "--json"],
+        home=home,
+        extra_env=env,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert payload["ok"] is False
+    assert "拒绝" in payload["error"]
+    assert dangling.is_symlink()
+    assert not (home / ".claude").exists()
+    assert not profile.exists()
 
 
 def test_runtime_install_refuses_unknown_local_bin_launcher_before_any_write(tmp_path):

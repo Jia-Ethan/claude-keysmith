@@ -8,7 +8,7 @@
 | 平台 | 产物 | 配置 | 状态 |
 |---|---|---|---|
 | macOS Apple Silicon（`aarch64-apple-darwin`） | `.app` + `.dmg` | `tauri.macos.conf.json`（targets）+ `tauri.bundle.conf.json`（`externalBin`） | 核心 GUI / 强杀恢复验收通过；Gatekeeper 用户视角提示仍待记录，见 [`beta-acceptance.md`](beta-acceptance.md) |
-| Windows x64（`x86_64-pc-windows-msvc`） | NSIS currentUser 安装器，WebView2 `downloadBootstrapper`（silent） | `tauri.windows.conf.json`（`allowDowngrades: false`）+ `tauri.bundle.conf.json`（`externalBin`） | 原生 CI 构建、静默安装/卸载、冻结 sidecar、restore/recover、隐私、GUI 进程与单实例 smoke 通过；实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复仍待验收 |
+| Windows x64（`x86_64-pc-windows-msvc`） | NSIS currentUser 安装器，WebView2 `downloadBootstrapper`（silent） | `tauri.windows.conf.json`（`allowDowngrades: false`）+ `tauri.bundle.conf.json`（`externalBin`） | 原生 CI 构建、静默安装/卸载、冻结 sidecar、restore/recover、隐私、GUI 进程与单实例 smoke 通过；source-CLI launcher 迁移/强杀恢复门禁已通过。实体机可见 UI、SmartScreen、无 WebView2 与强杀恢复仍待验收 |
 | Linux | 无 GUI 产物 | 无 | 不支持（CLI 继续支持） |
 
 两种受支持平台都只用 `cd gui && npm run bundle` 生成发行产物。该入口先原生构建 sidecar，再加载打包 overlay 启用 bundle 和 `externalBin`；裸 Tauri 构建不是发行打包入口。
@@ -18,7 +18,7 @@
 以下事项直接决定未签名 beta 能否外发，不得在取得证据前表述为已完成：
 
 1. **macOS beta 验收**：GUI Dashboard、Deploy、Manage、操作中关闭与真实进程强杀恢复 E2E 已完成；仍需记录带 quarantine 的 Gatekeeper 用户视角提示及人工安装步骤。
-2. **Windows 原生验收**：GitHub 托管 runner 已通过 sidecar/NSIS 构建、静默 install/uninstall、PowerShell wrapper、restore/recover、隐私、GUI 进程、单实例、超时杀树与输出超限；仍需 Windows 实体机完成可见 UI、操作中关闭、旧 launcher、事务强杀恢复、无 WebView2 与 SmartScreen 提示。
+2. **Windows 原生验收**：GitHub 托管 runner 已通过 sidecar/NSIS 构建、静默 install/uninstall、PowerShell wrapper、restore/recover、隐私、GUI 进程、单实例、超时杀树与输出超限；旧 launcher 迁移/首次移动后强杀恢复的 source-CLI 门禁亦已通过（CI run `31810727817`）。仍需 Windows 实体机完成可见 UI、操作中关闭、旧 launcher、事务强杀恢复、无 WebView2 与 SmartScreen 提示。
 3. **候选可追溯性**：PR 验证 artifact 固定为 `release_eligible:false`；合并后必须从精确 main SHA 重新生成两端 `release_eligible:true` 候选，并复核安装器、sidecar、`BUILD_INFO.json`、LF-only `SHA256SUMS`、版本、source commit、目标架构及签名状态。
 4. **发布授权**：本轮可以完成分支、PR、合并与候选 artifact；创建 tag / GitHub Release 前必须停下取得明确授权。
 

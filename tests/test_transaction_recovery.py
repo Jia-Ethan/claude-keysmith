@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import importlib.util
@@ -28,6 +29,9 @@ def run_cli(args, *, home, cwd=None, check=True, extra_env=None):
         "CLAUDE_KEYSMITH_CLAUDE_BIN",
     ):
         env.pop(key, None)
+    # macOS framework Python can put bytecode caches under HOME; keep the
+    # interpreter's own files outside the tree whose read-only semantics we test.
+    env["PYTHONPYCACHEPREFIX"] = str(home.parent / ".python-cache")
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -698,6 +702,58 @@ def test_committed_journal_is_never_reversed(tmp_path, monkeypatch):
     assert not journal.path.exists()
 
 
+def test_committed_launcher_migration_is_never_reversed(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    source = local_bin / "claude.ps1"
+    backup = local_bin / "claude.ps1.bak_20260814_120000_pre_v6"
+    source.write_text("# claude-keysmith\n$systemPrompt = 'system-prompt'\n", encoding="utf-8")
+    before = claude_instruct.file_evidence(source)
+    claude_instruct._move_file_no_overwrite(source, backup)
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    journal.log_step(
+        {
+            "action": "migrate",
+            "path": str(local_bin),
+            "before": claude_instruct.file_evidence(local_bin),
+            "after": claude_instruct.file_evidence(local_bin),
+            "moved": [[str(source), str(backup)]],
+            "migration_items": [
+                {"source": str(source), "backup": str(backup), "before": before}
+            ],
+        }
+    )
+    journal.commit()
+
+    actions, blockers = claude_instruct.finish_committed_journal(journal.record)
+    assert actions
+    assert blockers == []
+    original_backup = backup.read_bytes()
+    backup.write_text("tampered after commit\n", encoding="utf-8")
+    actions, blockers = claude_instruct.finish_committed_journal(journal.record)
+    assert actions == []
+    assert any("备份指纹异常" in item for item in blockers)
+    backup.write_bytes(original_backup)
+
+    malformed_record = json.loads(json.dumps(journal.record))
+    malformed_record["steps"][0]["migration_items"] = [None]
+    actions, blockers = claude_instruct.finish_committed_journal(malformed_record)
+    assert actions == []
+    assert any("证据格式无效" in item for item in blockers)
+
+    payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home).stdout
+    )
+    assert payload["ok"] is True
+    assert not source.exists()
+    assert backup.is_file()
+    assert not journal.path.exists()
+
+
 def test_crash_after_commit_window_is_consumed_by_next_write(tmp_path, monkeypatch):
     """A committed journal with a dead holder (crash before cleanup) must not
     permanently block the next write; the write consumes it after verifying the
@@ -719,6 +775,341 @@ def test_crash_after_commit_window_is_consumed_by_next_write(tmp_path, monkeypat
 
 
 # --------------------------------------------------- mid-transaction crash --
+
+
+def test_forced_kill_after_first_legacy_launcher_move_recovers_exactly(tmp_path):
+    home = tmp_path / "home"
+    keysmith_dir = home / ".claude" / "keysmith"
+    local_bin = home / ".local" / "bin"
+    profile = home / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    upstream = tmp_path / "upstream" / "claude.exe"
+    barrier = tmp_path / "first-launcher-moved"
+    keysmith_dir.mkdir(parents=True)
+    local_bin.mkdir(parents=True)
+    profile.parent.mkdir(parents=True)
+    upstream.parent.mkdir(parents=True)
+    upstream.write_bytes(b"fixture")
+
+    legacy_ps1 = local_bin / "claude.ps1"
+    legacy_cmd = local_bin / "claude.cmd"
+    ps1_content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
+    cmd_content = '@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n'
+    legacy_ps1.write_text(ps1_content, encoding="utf-8")
+    legacy_cmd.write_bytes(cmd_content.encode("utf-8"))
+
+    baseline = snapshot_tree(home)
+    child_code = r"""
+import importlib.util
+import sys
+import time
+from pathlib import Path
+
+module_path = Path(sys.argv[1])
+barrier = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("claude_instruct_kill_fixture", module_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+real_move = module._move_file_no_overwrite
+move_count = 0
+
+def pause_after_first_move(source, target):
+    global move_count
+    real_move(source, target)
+    move_count += 1
+    if move_count == 1:
+        barrier.write_text("moved\n", encoding="utf-8")
+        while True:
+            time.sleep(1)
+
+module._move_file_no_overwrite = pause_after_first_move
+sys.argv = [
+    str(module_path),
+    "install",
+    "--scope",
+    "user",
+    "--runtime",
+    "--yes",
+    "--json",
+]
+raise SystemExit(module.main())
+"""
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "CLAUDE_KEYSMITH_HOME": str(home),
+            "CLAUDE_KEYSMITH_SHELL": "powershell",
+            "CLAUDE_KEYSMITH_SHELL_RC": str(profile),
+            "CLAUDE_KEYSMITH_CLAUDE_BIN": str(upstream),
+            "APPDATA": str(home / "AppData" / "Roaming"),
+            "PYTHONPYCACHEPREFIX": str(tmp_path / ".python-cache"),
+        }
+    )
+    env.pop("CLAUDE_CONFIG_DIR", None)
+
+    child = subprocess.Popen(
+        [sys.executable, "-c", child_code, str(MODULE_PATH), str(barrier)],
+        env=env,
+        text=True,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + 20
+    while not barrier.exists() and child.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not barrier.exists():
+        stdout, stderr = child.communicate(timeout=5)
+        pytest.fail(f"child did not reach migration barrier: {stdout}\n{stderr}")
+
+    child.kill()
+    child.wait(timeout=10)
+    assert child.returncode != 0
+    assert not legacy_ps1.exists()
+    assert legacy_cmd.read_bytes() == cmd_content.encode("utf-8")
+    assert list(local_bin.glob("claude.ps1.bak_*_pre_v6*"))
+
+    journals = list(keysmith_dir.glob(".journal-*.json"))
+    assert len(journals) == 1
+    journal_record = json.loads(journals[0].read_text(encoding="utf-8"))
+    migrate_step = next(step for step in journal_record["steps"] if step["action"] == "migrate")
+    assert len(migrate_step["migration_items"]) == 2
+    assert migrate_step["moved"] == []  # kill happened before after-move progress persisted
+
+    blocked = run_cli(
+        ["install", "--scope", "user", "--runtime", "--yes", "--json"],
+        home=home,
+        extra_env={
+            "CLAUDE_KEYSMITH_SHELL": "powershell",
+            "CLAUDE_KEYSMITH_SHELL_RC": str(profile),
+            "CLAUDE_KEYSMITH_CLAUDE_BIN": str(upstream),
+        },
+        check=False,
+    )
+    assert blocked.returncode == 1
+    assert json.loads(blocked.stdout)["ok"] is False
+
+    before_preview = snapshot_tree(home)
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home)
+    preview_payload = json.loads(preview.stdout)
+    assert preview_payload["ok"] is True
+    assert any(item["action"] == "restore-moved" for item in preview_payload["planned_repairs"])
+    assert snapshot_tree(home) == before_preview
+
+    execute = run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home)
+    execute_payload = json.loads(execute.stdout)
+    assert execute_payload["ok"] is True
+    assert legacy_ps1.read_text(encoding="utf-8") == ps1_content
+    assert legacy_cmd.read_bytes() == cmd_content.encode("utf-8")
+    assert not list(local_bin.glob("claude.*.bak_*_pre_v6*"))
+    assert not list(keysmith_dir.glob(".journal-*.json"))
+    assert not (keysmith_dir / ".keysmith.lock").exists()
+
+    final = snapshot_tree(home)
+
+    def controlled_state(tree):
+        prefixes = (".claude", ".local", "Documents")
+        return {
+            key: (value[0], value[1])
+            for key, value in tree.items()
+            if key == "." or any(key == prefix or key.startswith(prefix + os.sep) for prefix in prefixes)
+        }
+
+    # macOS may let the Python runtime create its own ~/Library cache tree;
+    # keysmith-controlled paths must still return byte-for-byte to baseline.
+    assert controlled_state(final) == controlled_state(baseline)
+
+
+def test_live_launcher_migration_rejects_source_replacement_after_precheck(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    source = local_bin / "claude.ps1"
+    cmd = local_bin / "claude.cmd"
+    original = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
+    replacement = "third-party replacement\n"
+    source.write_text(original, encoding="utf-8")
+    cmd.write_bytes(b'@echo off\r\npowershell.exe -File "%~dp0claude.ps1" %*\r\n')
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    real_move = claude_instruct._move_file_no_overwrite
+
+    def replace_source_after_precheck(move_source, target):
+        if Path(move_source) == source:
+            source.write_text(replacement, encoding="utf-8")
+        real_move(Path(move_source), Path(target))
+
+    monkeypatch.setattr(
+        claude_instruct, "_move_file_no_overwrite", replace_source_after_precheck
+    )
+    with pytest.raises(OSError, match="迁移失败且回滚不完整"):
+        claude_instruct.tx_migrate_legacy_launchers(
+            journal, home, "20260814_120000"
+        )
+
+    journal_record = json.loads(journal.path.read_text(encoding="utf-8"))
+    migrate_step = next(
+        step for step in journal_record["steps"] if step["action"] == "migrate"
+    )
+    backup = Path(migrate_step["migration_items"][0]["backup"])
+    assert migrate_step["moved"] == []
+    assert not source.exists()
+    assert backup.read_text(encoding="utf-8") == replacement
+    assert cmd.exists()
+
+    before_preview = snapshot_tree(home)
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home, check=False)
+    preview_payload = json.loads(preview.stdout)
+    assert preview.returncode == 1
+    assert preview_payload["ok"] is False
+    assert any("指纹不匹配" in item for item in preview_payload["blockers"])
+    assert snapshot_tree(home) == before_preview
+
+    execute = run_cli(
+        ["recover", "--scope", "user", "--yes", "--json"],
+        home=home,
+        check=False,
+    )
+    execute_payload = json.loads(execute.stdout)
+    assert execute.returncode == 1
+    assert execute_payload["blockers"] == preview_payload["blockers"]
+    assert not source.exists()
+    assert backup.read_text(encoding="utf-8") == replacement
+    assert cmd.exists()
+    assert journal.path.exists()
+
+
+def test_pending_launcher_migration_preserves_same_content_distinct_backup(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    source = local_bin / "claude.ps1"
+    backup = local_bin / "claude.ps1.bak_20260814_120000_pre_v6"
+    content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
+    source.write_text(content, encoding="utf-8")
+    before = claude_instruct.file_evidence(source)
+    backup.write_text(content, encoding="utf-8")  # same bytes, different file identity
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    journal.log_step(
+        {
+            "action": "migrate",
+            "path": str(local_bin),
+            "before": claude_instruct.file_evidence(local_bin),
+            "after": {},
+            "moved": [],
+            "migration_items": [
+                {"source": str(source), "backup": str(backup), "before": before}
+            ],
+        }
+    )
+
+    before_preview = snapshot_tree(home)
+    preview = run_cli(["recover", "--scope", "user", "--json"], home=home, check=False)
+    preview_payload = json.loads(preview.stdout)
+    assert preview.returncode == 1
+    assert any("身份不同" in item for item in preview_payload["blockers"])
+    assert snapshot_tree(home) == before_preview
+
+    execute = run_cli(
+        ["recover", "--scope", "user", "--yes", "--json"],
+        home=home,
+        check=False,
+    )
+    assert execute.returncode == 1
+    assert source.read_text(encoding="utf-8") == content
+    assert backup.read_text(encoding="utf-8") == content
+    assert journal.path.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX migration uses a hard-link transition")
+def test_pending_launcher_migration_cleans_same_inode_transition(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    source = local_bin / "claude.ps1"
+    backup = local_bin / "claude.ps1.bak_20260814_120000_pre_v6"
+    content = "# claude-keysmith\n$systemPrompt = 'system-prompt'\n"
+    source.write_text(content, encoding="utf-8")
+    before = claude_instruct.file_evidence(source)
+    os.link(str(source), str(backup))
+    assert os.path.samestat(source.stat(), backup.stat())
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    journal.log_step(
+        {
+            "action": "migrate",
+            "path": str(local_bin),
+            "before": claude_instruct.file_evidence(local_bin),
+            "after": {},
+            "moved": [],
+            "migration_items": [
+                {"source": str(source), "backup": str(backup), "before": before}
+            ],
+        }
+    )
+
+    preview_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--json"], home=home).stdout
+    )
+    assert preview_payload["ok"] is True
+    assert any(item["action"] == "cleanup" for item in preview_payload["planned_repairs"])
+    assert source.exists() and backup.exists()
+
+    execute_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home).stdout
+    )
+    assert execute_payload["ok"] is True
+    assert source.read_text(encoding="utf-8") == content
+    assert not backup.exists()
+    assert not journal.path.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX recovery uses a hard-link transition")
+def test_old_moved_only_journal_cleans_interrupted_recovery_hard_link(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUDE_KEYSMITH_HOME", str(home))
+    paths = claude_instruct.resolve_scope("user")
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    source = local_bin / "claude.ps1"
+    backup = local_bin / "claude.ps1.bak_20260814_120000_pre_v6"
+    backup.write_text("# claude-keysmith\n$systemPrompt = 'system-prompt'\n", encoding="utf-8")
+    os.link(str(backup), str(source))
+
+    journal = claude_instruct.TransactionJournal(paths, "install")
+    journal.log_step(
+        {
+            "action": "migrate",
+            "path": str(local_bin),
+            "before": claude_instruct.file_evidence(local_bin),
+            "after": {},
+            "moved": [[str(source), str(backup)]],
+        }
+    )
+
+    preview_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--json"], home=home).stdout
+    )
+    assert preview_payload["ok"] is True
+    assert any(item["action"] == "cleanup" for item in preview_payload["planned_repairs"])
+
+    execute_payload = json.loads(
+        run_cli(["recover", "--scope", "user", "--yes", "--json"], home=home).stdout
+    )
+    assert execute_payload["ok"] is True
+    assert source.is_file()
+    assert not backup.exists()
+    assert not journal.path.exists()
 
 
 def test_install_failure_rolls_back_and_recovers_clean(tmp_path, monkeypatch):

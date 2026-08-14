@@ -33,7 +33,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 START_TEMPLATE = "<!-- claude-keysmith:start name={name} -->"
@@ -155,22 +155,6 @@ def atomic_write_text(path: Path, content: str) -> None:
                 tmp_path.unlink()
             except OSError:
                 pass
-
-
-def reserve_unique_backup_path(path: Path, timestamp: str, suffix: str = "") -> Path:
-    """Reserve a backup path so a later rename cannot overwrite another writer."""
-    extra = f"_{suffix}" if suffix else ""
-    base = path.with_name(f"{path.name}.bak_{timestamp}{extra}")
-    counter = 1
-    while True:
-        candidate = base if counter == 1 else base.with_name(f"{base.name}_{counter}")
-        counter += 1
-        try:
-            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            continue
-        os.close(fd)
-        return candidate
 
 
 def backup_file(path: Path, timestamp: Optional[str] = None, suffix: str = "") -> Path:
@@ -431,7 +415,7 @@ def inspect_legacy_launchers(home: Path) -> Dict[str, Any]:
     bin_dir = home / ".local" / "bin"
     ps1 = bin_dir / "claude.ps1"
     cmd = bin_dir / "claude.cmd"
-    existing = [path for path in (ps1, cmd) if path.exists()]
+    existing = [path for path in (ps1, cmd) if os.path.lexists(str(path))]
     if not existing:
         return {
             "detected": False,
@@ -451,9 +435,11 @@ def inspect_legacy_launchers(home: Path) -> Dict[str, Any]:
             "conflict_paths": [str(path) for path in existing],
         }
 
+    ps1_regular = ps1.is_file() and not ps1.is_symlink()
+    cmd_regular = cmd.is_file() and not cmd.is_symlink()
     ps1_lower = ps1_text.lower()
     ps1_known = bool(
-        ps1.is_file()
+        ps1_regular
         and "keysmith" in ps1_lower
         and ("system-prompt" in ps1_lower or "append-prompt" in ps1_lower)
     )
@@ -463,7 +449,7 @@ def inspect_legacy_launchers(home: Path) -> Dict[str, Any]:
         cmd_lines = cmd_lines[1:]
     forwarder = cmd_lines[0] if cmd_lines else ""
     cmd_known = bool(
-        cmd.is_file()
+        cmd_regular
         and len(cmd_lines) in (1, 2)
         and LEGACY_CMD_FORWARD_RE.fullmatch(forwarder)
         and (
@@ -481,47 +467,143 @@ def inspect_legacy_launchers(home: Path) -> Dict[str, Any]:
     }
 
 
-def migrate_legacy_launchers(home: Path, timestamp: str) -> List[Tuple[Path, Path]]:
-    """Rename a recognized launcher pair to unique recovery backups."""
+def _unique_backup_candidate(path: Path, timestamp: str, suffix: str = "") -> Path:
+    """Choose an unused backup name without touching the filesystem."""
+    extra = f"_{suffix}" if suffix else ""
+    base = path.with_name(f"{path.name}.bak_{timestamp}{extra}")
+    counter = 1
+    while True:
+        candidate = base if counter == 1 else base.with_name(f"{base.name}_{counter}")
+        if not os.path.lexists(str(candidate)):
+            return candidate
+        counter += 1
+
+
+def plan_legacy_launcher_migration(home: Path, timestamp: str) -> List[Dict[str, Any]]:
+    """Build a side-effect-free launcher migration plan with source fingerprints."""
     inspection = inspect_legacy_launchers(home)
     if inspection["conflict"]:
         raise ValueError("检测到未知 ~/.local/bin/claude.ps1 或 claude.cmd，拒绝覆盖")
     if not inspection["detected"]:
         return []
 
+    plan: List[Dict[str, Any]] = []
+    for raw_path in inspection["paths"]:
+        source = Path(raw_path)
+        before = file_evidence(source)
+        if not before.get("exists") or source.is_symlink():
+            raise ValueError(f"旧 launcher 在迁移规划期间发生变化，拒绝继续: {source}")
+        plan.append(
+            {
+                "source": str(source),
+                "backup": str(_unique_backup_candidate(source, timestamp, "pre_v6")),
+                "before": before,
+            }
+        )
+    verification = inspect_legacy_launchers(home)
+    if not verification["detected"] or verification["paths"] != inspection["paths"]:
+        raise ValueError("旧 launcher 在迁移规划期间发生变化，拒绝继续")
+    if any(
+        not _migration_item_matches(Path(item["source"]), item["before"])
+        for item in plan
+    ):
+        raise ValueError("旧 launcher 在迁移规划期间发生变化，拒绝继续")
+    return plan
+
+
+def _move_file_no_overwrite(source: Path, target: Path) -> None:
+    """Move a regular file without ever replacing an existing target."""
+    if os.name == "nt":
+        os.rename(str(source), str(target))
+        return
+
+    # POSIX rename replaces an existing destination. A same-directory hard
+    # link plus unlink preserves no-overwrite semantics and is crash-recoverable.
+    os.link(str(source), str(target))
+    try:
+        source.unlink()
+    except BaseException:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _migration_item_matches(path: Path, expected: Dict[str, Any]) -> bool:
+    try:
+        return bool(
+            os.path.lexists(str(path))
+            and path.is_file()
+            and not path.is_symlink()
+            and file_evidence(path).get("sha256") == expected.get("sha256")
+        )
+    except OSError:
+        return False
+
+
+def _same_posix_file_identity(first: Path, second: Path) -> bool:
+    if os.name == "nt":
+        return False
+    try:
+        return os.path.samestat(first.stat(), second.stat())
+    except OSError:
+        return False
+
+
+def migrate_legacy_launchers(
+    home: Path,
+    timestamp: str,
+    *,
+    migration_plan: Optional[List[Dict[str, Any]]] = None,
+    on_moved: Optional[Callable[[Path, Path], None]] = None,
+) -> List[Tuple[Path, Path]]:
+    """Rename a recognized launcher pair to unique recovery backups."""
+    plan = migration_plan if migration_plan is not None else plan_legacy_launcher_migration(home, timestamp)
+    if not plan:
+        return []
+
     moved: List[Tuple[Path, Path]] = []
     try:
-        for raw_path in inspection["paths"]:
-            source = Path(raw_path)
-            backup = reserve_unique_backup_path(source, timestamp, "pre_v6")
-            try:
-                os.replace(str(source), str(backup))
-            except BaseException:
-                try:
-                    backup.unlink()
-                except OSError:
-                    pass
-                raise
+        for item in plan:
+            source = Path(item["source"])
+            backup = Path(item["backup"])
+            before = item.get("before") or {}
+            if not _migration_item_matches(source, before):
+                raise OSError(f"旧 launcher 在迁移前发生变化，拒绝移动: {source}")
+            if os.path.lexists(str(backup)):
+                raise FileExistsError(f"旧 launcher 备份路径已被占用，拒绝覆盖: {backup}")
+            _move_file_no_overwrite(source, backup)
             moved.append((source, backup))
+            if not _migration_item_matches(backup, before):
+                raise OSError(f"旧 launcher 在迁移期间发生变化，拒绝提交: {source}")
+            if on_moved is not None:
+                on_moved(source, backup)
     except BaseException as migration_error:
         rollback_errors: List[str] = []
+        plan_by_source = {item["source"]: item for item in plan}
         for source, backup in reversed(moved):
-            if not backup.exists():
+            before = plan_by_source[str(source)].get("before") or {}
+            source_matches = _migration_item_matches(source, before)
+            backup_matches = _migration_item_matches(backup, before)
+            if source_matches and not os.path.lexists(str(backup)):
                 continue
-            try:
-                fd = os.open(str(source), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                os.close(fd)
-            except OSError as exc:
-                rollback_errors.append(f"{source}: {exc}")
+            if source_matches and backup_matches:
+                if _same_posix_file_identity(source, backup):
+                    try:
+                        backup.unlink()
+                    except OSError as exc:
+                        rollback_errors.append(f"{backup}: {exc}")
+                else:
+                    rollback_errors.append(f"{source}: rollback target was recreated")
                 continue
-            try:
-                os.replace(str(backup), str(source))
-            except OSError as exc:
+            if not os.path.lexists(str(source)) and backup_matches:
                 try:
-                    source.unlink()
-                except OSError:
-                    pass
-                rollback_errors.append(f"{source}: {exc}")
+                    _move_file_no_overwrite(backup, source)
+                except OSError as exc:
+                    rollback_errors.append(f"{source}: {exc}")
+                continue
+            rollback_errors.append(f"{source}: launcher/backup state no longer matches the migration plan")
         if rollback_errors:
             details = "; ".join(rollback_errors)
             raise OSError(f"旧 launcher 迁移失败且回滚不完整: {details}") from migration_error
@@ -823,9 +905,43 @@ def shell_block_pattern() -> re.Pattern:
     return re.compile(rf"(?ms)^{begin}\n.*?^{end}\n?")
 
 
-def shell_wrapper_is_current(content: str, expected_block: str) -> bool:
+def _is_missing_literal_zsh_fast_path(raw: str) -> bool:
+    """Accept only a missing absolute path with no zsh expansion semantics."""
+    if not os.path.isabs(raw):
+        return False
+    if any(char in raw for char in ("$", "`", "\\")):
+        return False
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
+        return False
+    try:
+        os.lstat(raw)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def shell_wrapper_is_current(content: str, expected_block: str, shell_kind: str = "") -> bool:
     match = shell_block_pattern().search(content)
-    return bool(match and match.group(0) == expected_block)
+    if not match:
+        return False
+    actual_block = match.group(0)
+    if actual_block == expected_block:
+        return True
+    if shell_kind != "zsh":
+        return False
+
+    entry_pattern = re.compile(r'(?m)^  entry="([^"\n]+)"$')
+    actual_entry = entry_pattern.search(actual_block)
+    expected_entry = entry_pattern.search(expected_block)
+    if not actual_entry or not expected_entry:
+        return False
+    if not _is_missing_literal_zsh_fast_path(actual_entry.group(1)):
+        return False
+    return entry_pattern.sub('  entry="<dynamic>"', actual_block, count=1) == entry_pattern.sub(
+        '  entry="<dynamic>"', expected_block, count=1
+    )
 
 
 def ensure_shell_wrapper(content: str, block: str) -> Tuple[str, bool]:
@@ -1214,10 +1330,29 @@ def tx_remove_step(journal: TransactionJournal, path: Path) -> None:
 
 
 def tx_migrate_legacy_launchers(journal: TransactionJournal, home: Path, timestamp: str) -> List[Tuple[Path, Path]]:
-    moved = migrate_legacy_launchers(home, timestamp)
-    if not moved:
+    migration_plan = plan_legacy_launcher_migration(home, timestamp)
+    if not migration_plan:
         return []
-    step = journal_step_before(journal, "migrate", home / ".local" / "bin", moved=[[str(s), str(b)] for s, b in moved])
+
+    migration_items = [dict(item) for item in migration_plan]
+    step = journal_step_before(
+        journal,
+        "migrate",
+        home / ".local" / "bin",
+        moved=[],
+        migration_items=migration_items,
+    )
+
+    def record_moved(source: Path, backup: Path) -> None:
+        step["moved"].append([str(source), str(backup)])
+        journal._persist()
+
+    moved = migrate_legacy_launchers(
+        home,
+        timestamp,
+        migration_plan=migration_plan,
+        on_moved=record_moved,
+    )
     journal_step_after(journal, step)
     return moved
 
@@ -1393,6 +1528,97 @@ def _pending_rollback_core(
     for step in reversed(steps):
         action = step.get("action")
         if action == "migrate":
+            migration_items = step.get("migration_items")
+            if isinstance(migration_items, list):
+                for item in reversed(migration_items):
+                    if not isinstance(item, dict):
+                        blocker("迁移事务证据格式无效，拒绝回滚")
+                        continue
+                    source = Path(item.get("source", ""))
+                    backup = Path(item.get("backup", ""))
+                    before = item.get("before") or {}
+                    expected_sha = before.get("sha256")
+                    if not source.name or not backup.name or expected_sha is None:
+                        blocker(f"迁移事务缺少路径或源指纹，拒绝回滚: {source}")
+                        continue
+
+                    source_present = current_present(source)
+                    backup_present = current_present(backup)
+                    if source_present is None or backup_present is None:
+                        continue
+
+                    if source_present:
+                        try:
+                            source_regular = source.is_file() and not source.is_symlink()
+                        except OSError as exc:
+                            blocker(f"无法检查迁移回滚目标类型 {source}: {exc}")
+                            continue
+                        if not source_regular or not matches_state(source, before):
+                            blocker(f"迁移源被未知方修改或替换，拒绝回滚: {source}")
+                            continue
+                        if not backup_present:
+                            continue  # move never happened, or was already rolled back
+                        try:
+                            backup_regular = backup.is_file() and not backup.is_symlink()
+                        except OSError as exc:
+                            blocker(f"无法检查迁移备份类型 {backup}: {exc}")
+                            continue
+                        if not backup_regular or not matches_state(backup, before):
+                            blocker(f"迁移备份状态异常，拒绝清理: {backup}")
+                            continue
+                        if not _same_posix_file_identity(source, backup):
+                            blocker(f"迁移源与备份同时存在且身份不同，拒绝清理: {backup}")
+                            continue
+                        if execute:
+                            try:
+                                backup.unlink()
+                            except OSError as exc:
+                                blocker(f"无法清理已回滚的迁移备份 {backup}: {exc}")
+                                continue
+                        remember_state(
+                            backup,
+                            {"sha256": None, "size_bytes": None, "exists": False},
+                            present=False,
+                        )
+                        report("cleanup", backup, "removed duplicate backup from interrupted migration")
+                        continue
+
+                    if not backup_present:
+                        blocker(f"迁移源与备份均缺失，无法回滚: {source}")
+                        continue
+                    try:
+                        backup_regular = backup.is_file() and not backup.is_symlink()
+                    except OSError as exc:
+                        blocker(f"无法检查迁移备份类型 {backup}: {exc}")
+                        continue
+                    if not backup_regular or not matches_state(backup, before):
+                        blocker(f"迁移备份指纹不匹配，拒绝回滚: {backup}")
+                        continue
+                    try:
+                        backup_raw = read_current_bytes(backup)
+                    except OSError as exc:
+                        blocker(f"无法读取迁移备份 {backup}: {exc}")
+                        continue
+                    if hashlib.sha256(backup_raw).hexdigest() != expected_sha:
+                        blocker(f"迁移备份在恢复检查期间发生变化，拒绝使用: {backup}")
+                        continue
+                    if execute:
+                        try:
+                            _move_file_no_overwrite(backup, source)
+                        except OSError as exc:
+                            blocker(f"迁移回滚失败 {source}: {exc}")
+                            continue
+                    remember_state(source, before, present=True, raw=backup_raw)
+                    remember_state(
+                        backup,
+                        {"sha256": None, "size_bytes": None, "exists": False},
+                        present=False,
+                    )
+                    report("restore-moved", source, f"restored from {backup.name}")
+                continue
+
+            # Compatibility path for journals created before migration intent
+            # and source fingerprints were persisted.
             for source_str, backup_str in reversed(step.get("moved", [])):
                 source = Path(source_str)
                 backup = Path(backup_str)
@@ -1400,6 +1626,23 @@ def _pending_rollback_core(
                 if source_present is None:
                     continue
                 if source_present:
+                    backup_present = current_present(backup)
+                    if backup_present is None:
+                        continue
+                    if backup_present and _same_posix_file_identity(source, backup):
+                        if execute:
+                            try:
+                                backup.unlink()
+                            except OSError as exc:
+                                blocker(f"无法清理旧格式迁移恢复残留 {backup}: {exc}")
+                                continue
+                        remember_state(
+                            backup,
+                            {"sha256": None, "size_bytes": None, "exists": False},
+                            present=False,
+                        )
+                        report("cleanup", backup, "removed duplicate backup from interrupted legacy-journal recovery")
+                        continue
                     blocker(f"回滚目标已存在，拒绝覆盖: {source}")
                     continue
                 backup_present = current_present(backup)
@@ -1415,7 +1658,7 @@ def _pending_rollback_core(
                     backup_raw = None
                 if execute:
                     try:
-                        os.replace(str(backup), str(source))
+                        _move_file_no_overwrite(backup, source)
                     except OSError as exc:
                         blocker(f"迁移回滚失败 {source}: {exc}")
                         continue
@@ -1489,9 +1732,28 @@ def finish_committed_journal(record: Dict[str, Any]) -> Tuple[List[Dict[str, Any
     for step in record.get("steps", []):
         if step.get("action") != "migrate":
             continue
+        migration_items = step.get("migration_items")
+        if isinstance(migration_items, list):
+            for item in migration_items:
+                if not isinstance(item, dict):
+                    blockers.append("已提交事务的迁移证据格式无效，保留并报告")
+                    continue
+                source_raw = item.get("source")
+                backup_raw = item.get("backup")
+                before = item.get("before") or {}
+                if not source_raw or not backup_raw or before.get("sha256") is None:
+                    blockers.append("已提交事务的迁移证据不完整，保留并报告")
+                    continue
+                source = Path(source_raw)
+                backup = Path(backup_raw)
+                if os.path.lexists(str(source)):
+                    blockers.append(f"已提交事务的迁移目标被重建，保留并报告: {source}")
+                if not _migration_item_matches(backup, before):
+                    blockers.append(f"已提交事务的迁移备份指纹异常，保留并报告: {backup}")
+            continue
         for source_str, _backup_str in step.get("moved", []):
             source = Path(source_str)
-            if source.exists():
+            if os.path.lexists(str(source)):
                 blockers.append(f"已提交事务的迁移目标被重建，保留并报告: {source}")
     if not blockers:
         actions.append({"action": "cleanup", "path": record.get("scope_root", ""), "detail": "committed transaction verified; no residual cleanup required"})
@@ -2207,7 +2469,7 @@ def collect_runtime_status(paths: ScopePaths, md_filename: str, planned: Optiona
             rt["shell_kind"],
             rt["upstream_candidates"],
         )
-        wrapper_current = shell_wrapper_is_current(shell_rc_content, expected_wrapper)
+        wrapper_current = shell_wrapper_is_current(shell_rc_content, expected_wrapper, rt["shell_kind"])
     settings_aligned = bool(system_body) and settings.get("systemPrompt") == system_body
     runtime_ready = bool(
         system_complete
@@ -3014,7 +3276,7 @@ def command_runtime_doctor(args) -> int:
             rt["shell_kind"],
             rt["upstream_candidates"],
         )
-        wrapper_current = shell_wrapper_is_current(shell_rc_content, expected_wrapper)
+        wrapper_current = shell_wrapper_is_current(shell_rc_content, expected_wrapper, rt["shell_kind"])
         repair_actions: List[str] = []
         if not rt["upstream_exists"]:
             repair_actions.append("Repair or reinstall Claude Code, then rerun doctor.")
@@ -3023,7 +3285,7 @@ def command_runtime_doctor(args) -> int:
         if rt["legacy_launcher_conflict"]:
             repair_actions.append("Inspect the unknown ~/.local/bin launcher files; keysmith will not overwrite them.")
         if not wrapper_current:
-            repair_actions.append("Run install --scope user --runtime --yes to install the current PowerShell wrapper.")
+            repair_actions.append("Run install --scope user --runtime --yes to install the current shell wrapper.")
         if not rt["system_prompt"].is_file() or not rt["append_prompt"].is_file():
             repair_actions.append("Run install --scope user --runtime --yes to restore keysmith prompt files.")
         if not (system_body and settings.get("systemPrompt") == system_body):

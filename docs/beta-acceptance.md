@@ -3,7 +3,7 @@
 
 本文区分"已实际取得证据"、"发布前必须补齐的验证"与"本次未签名 beta 已接受的限制"。**本分支不发布任何产物**；外发 `desktop-v0.1.0-beta.1` 前必须完成第二节全部未完成条目。代码签名、公证、Authenticode 与自动更新不属于这次明确标记为未签名 beta 的阻塞项，但必须在产物与发布说明中如实披露。
 
-验证环境（发布候选轮，分支 `prep/gui-release-candidate`，base `bbd8ca15`）：macOS 26.5.2 / Apple Silicon（arm64）实体机；Python 3.14.6 独立 venv（`gui/requirements-build.txt` + pytest）；Node 25.9.0 / npm 11.12.1（`npm ci`）；rustc 1.93.1。所有 CLI 验证在隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` / `CLAUDE_KEYSMITH_SHELL_RC` 与 fake Claude 上游下进行，未触碰真实 `~/.claude` 或真实 shell profile。
+验证环境（发布阻塞修复轮，分支 `fix/desktop-gui-p0-recovery`，base `f8b8234f`）：macOS 26.5.2 / Apple Silicon（arm64）实体机；Python 3.14.6 独立 venv（pytest 9.1.1）；Node 25.9.0 / npm 11.12.1（`npm ci`）；rustc 1.93.1。所有 CLI 验证在隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` / `CLAUDE_KEYSMITH_SHELL_RC` 下进行，未触碰真实 `~/.claude` 或真实 shell profile；真实 Claude 版本切换专项仅运行临时 npm prefix 中的 `claude --version`。
 
 ## 一、发布候选轮已取得证据的验证
 
@@ -12,7 +12,7 @@
 | 项目 | 命令 / 方式 | 结果 |
 |---|---|---|
 | CLI 语法 | `python3 -m py_compile claude-instruct.py` | 通过 |
-| CLI 测试套件 | 隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` 下 `python3 -m pytest -q tests` | **125 passed** |
+| CLI 测试套件 | 隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` 下 `python3 -m pytest -q tests` | **135 passed** |
 | 前端测试 | `cd gui && npm test`（vitest） | **11 文件 113 passed** |
 | Rust 门禁 | `cargo fmt --check && cargo check --locked && cargo test --locked` | **7 passed**（干净检出，无需 sidecar） |
 | 前端生产构建 | `npm run build` | 通过，最大 chunk 200.18 kB，无 >500 kB 警告 |
@@ -43,11 +43,12 @@
 | 超时杀整棵进程树 | `cargo test timeout_terminates_descendant_processes`：真实 `/bin/sh` 派生 `sleep 60` 后代，100ms 超时后验证后代 PID 被杀 | 通过 |
 | 2 MiB 输出失败关闭 | `cargo test oversized_output_fails_closed`：真实 `dd` 输出 3 MiB，`cli_run` 返回明确错误（"CLI 输出不完整，已阻止继续操作"），不解析半截输出；前端 parser 对未闭合 JSON 返回"输出不完整"（vitest 覆盖） | 通过 |
 | pending journal 恢复链 | `test_recover_rolls_back_pending_journal_preview_then_execute`：构造含真实 before/after 指纹的 pending journal；后续写入被阻塞，preview 报告计划且不修改目标，execute 回滚并消费 journal，重复 recover 幂等 | 通过（事务 fixture；不等同于真实进程强杀） |
+| 旧 launcher 首个移动后强杀 | source CLI 事务测试：子进程执行 runtime install，在首个 `claude.ps1` no-overwrite move 完成、after-move 进度尚未落盘时由父进程强杀；pending journal 阻塞新写入，preview 前后快照一致且计划 `restore-moved`，execute 精确还原 `.ps1/.cmd` 与此前所有 runtime 写入并清理 journal/lock/备份 | macOS 本地通过；`test_forced_kill_after_first_legacy_launcher_move_recovers_exactly`。Windows source-CLI 候选门禁已在 CI run `31810727817` 通过；不等同于已安装冻结 sidecar 或实体机 UI 验收 |
 | journal after 证据持久化 | `test_transaction_helpers_persist_after_evidence_and_reject_later_edit`：生产事务 helper 把 mutation 后指纹写回实际 journal；随后第三方修改会被识别为未知修改并失败关闭 | 通过 |
 | recover 预览纯只读 | `snapshot_tree` 对整个隔离 HOME 比较文件内容、mode 与 mtime；可恢复、多步同路径与 marker 场景 preview 前后快照一致 | 通过 |
 | 同路径多步逆序恢复 | `test_recover_repeated_writes_use_virtual_reverse_state`：同一路径 `A → B → C` 的 preview 与 execute 均按 `C → B → A` 判定，最终恢复原内容 | 通过 |
 | 写入故障自动回滚 | `test_install_failure_rolls_back_and_recovers_clean`：在 mutation 中注入 `OSError`，验证原内容恢复、journal/lock 清理、备份保留 | 通过（故障注入；不等同于 `SIGKILL`） |
-| committed journal 不反撤 | `test_committed_journal_is_never_reversed` / `test_crash_after_commit_window_is_consumed_by_next_write`：committed 结果保持，残留 journal 只被消费 | 通过 |
+| committed journal 不反撤 | `test_committed_journal_is_never_reversed` / `test_committed_launcher_migration_is_never_reversed` / `test_crash_after_commit_window_is_consumed_by_next_write`：committed 文件写入和 launcher 迁移结果保持，残留 journal 只被消费 | 通过 |
 | 活锁拒绝与 stale lock 回收 | 存活进程持有 `.keysmith.lock` 时写入失败关闭；死 PID stale lock 可由下一次受控操作回收 | 通过 |
 | 原子临时残留失败关闭 | 强杀可能遗留的 `.<target>.keysmith-tmp-*.tmp` 会让 status 标记 recovery-required、阻塞后续写入；recover preview 只读列出计划，execute 只清理专属临时残留，不碰其它文件 | 通过 |
 | 全局写租约边界 | vitest：execute 走独占租约、并发写拒绝、preview/读操作走共享租约不被误锁、后端同步抛错时租约释放（`api.test.js` / `store.test.js`，113 passed 内） | 通过 |
@@ -65,12 +66,18 @@
 | 操作中关闭 | restore execute 进行中点击关闭，窗口等待操作结束后退出；恢复成功且无 sidecar / lock / journal 残留 | 通过 |
 | doctor / backups 不泄漏 | `doctor --json` 键集合固定 9 键；断言输出不含 token / cookie / Bearer / sk- / base_url / ANTHROPIC 字样；`backups --json` 仅含路径、绝对 `target_path` 与指纹元数据，无文件内容 | 通过 |
 
+### Claude Code 包版本目录切换 smoke（隔离 npm prefix）
+
+- 临时安装真实 `@anthropic-ai/claude-code@2.1.231` 与 `2.1.232`，wrapper 首次运行返回 `2.1.231`；移走整个旧版本 prefix 后，不改 wrapper 即动态解析到新 prefix 并返回 `2.1.232`。
+- 修复并验证 `status --runtime --json`：旧快路径已消失且 wrapper 其它结构完整时，`shell_wrapper_current=true`、`upstream_exists=true`、`runtime_ready=true`、`upgrade_required=false`。真实 `/Users/ethan/.local/bin/claude` 保持 `2.1.212`，未被调用或修改。
+- 证据目录：`/tmp/ks-claude-switch.c6tIaH`；仅执行 `claude --version`，无登录、凭证或模型请求。
+
 ## 二、发布前仍须补齐的验证（未完成不得外发）
 
 ### macOS ARM64 实体机
 
 - [ ] 从干净（或新建隔离）账户打开未签名 `.app` / `.dmg`，确认 Gatekeeper 提示文案可接受并写入发布说明（当前 `spctl` 拒绝状态见上文，需人工记录用户视角文案）。
-- [ ] 真实 Claude Code 升级（版本目录切换）后 wrapper 仍可用（需真实 Claude 安装，隔离环境无法覆盖）。
+- [ ] 用户安装的真实 Claude Code 升级（版本目录切换）后 wrapper 仍可用；上方仅有隔离 npm prefix 的真实包版本切换 smoke，不能替代此项。
 
 ### Windows x64 原生环境
 
@@ -81,10 +88,10 @@
 - [x] GUI 进程启动并保持存活，第二实例由 single-instance guard 退出；此项只证明进程链，不代表页面视觉与交互验收。
 - [x] Windows Rust 原生测试覆盖 `taskkill /T /F` 杀父子进程树与 2 MiB 输出超限失败关闭。
 - [ ] Windows 实体机可见 UI：安装 → Dashboard/sidecar 探测 → Deploy → Manage uninstall/restore/recover → 操作中关闭。
-- [ ] 旧 launcher 迁移与同名冲突路径（`~/.local/bin/claude.ps1` / `claude.cmd`）。
+- [ ] Windows 实体机旧 launcher 迁移与同名冲突路径（`~/.local/bin/claude.ps1` / `claude.cmd`）；托管 runner 仅将 source-CLI 迁移/冲突测试设为自动门禁。
 - [ ] WebView2 bootstrapper 在无 WebView2 机器上静默安装。
 - [ ] 未签名 SmartScreen 提示文案确认并写入发布说明。
-- [ ] Windows 事务中途强杀后的 pending journal 阻塞、只读 preview 与精确恢复 E2E；当前 CI 只覆盖 Rust 超时杀树和受控原子残留恢复。
+- [ ] Windows 实体机事务中途强杀后的 pending journal 阻塞、只读 preview 与精确恢复 E2E；托管 runner 另有 source-CLI 首次 launcher 移动后强杀测试，不等同于已安装冻结 sidecar 或可见 UI 验收。
 
 ## 三、发布政策与边界声明
 

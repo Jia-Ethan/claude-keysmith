@@ -103,7 +103,7 @@ localStorage 单键 `claude-keysmith-gui:settings`：`cliPath`（留空 = 自动
 - 构建环境净化：`PYTHONNOUSERSITE=1`，删除 `PYTHONHOME` / `PYTHONPATH` / `PYTHONUSERBASE`；`PYTHON` 环境变量指定解释器（需 `pip install -r requirements-build.txt`）。
 - 产物原子落位 `src-tauri/binaries/claude-keysmith-cli-<triple>[.exe]`（先复制到临时名再 rename，Unix 下 `chmod 755`），随后 `--version` smoke，失败即构建失败。
 - `npm run bundle` 是唯一打包入口：先构建 sidecar，再加载 `tauri.bundle.conf.json` 启用 bundle 并声明 `externalBin`。常驻配置 `bundle.active=false`，裸 `tauri build` 只产 executable；即使显式传 `--bundles`，默认 `beforeBundleCommand` 也会拒绝。overlay 覆盖该 hook 后仍按 `TAURI_ENV_TARGET_TRIPLE` 校验目标 sidecar 存在且可执行。
-- macOS 目标由 `tauri.macos.conf.json` 声明 `app` + `dmg`；Windows 由 `tauri.windows.conf.json` 声明 NSIS currentUser + WebView2 downloadBootstrapper。Windows 原生 CI 已覆盖构建、静默安装/卸载、冻结 sidecar、PowerShell wrapper、restore/recover、隐私、GUI 进程与单实例；实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复状态见发布验收文档。
+- macOS 目标由 `tauri.macos.conf.json` 声明 `app` + `dmg`；Windows 由 `tauri.windows.conf.json` 声明 NSIS currentUser + WebView2 downloadBootstrapper。Windows 原生 CI 已覆盖构建、静默安装/卸载、冻结 sidecar、PowerShell wrapper、restore/recover、隐私、GUI 进程与单实例，并在 source CLI 层覆盖旧 launcher 迁移/强杀恢复；实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复状态见发布验收文档。
 
 ## 9. 不变量（改动必须保持）
 

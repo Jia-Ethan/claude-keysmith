@@ -424,6 +424,24 @@ def test_backups_json_enumerates_only_keysmith_scheme(tmp_path):
     assert any(name.startswith("CLAUDE.md.bak_") for name in names)
 
 
+def test_backups_json_never_leaks_backup_contents_or_credentials(tmp_path):
+    home = tmp_path / "home"
+    keysmith_dir = home / ".claude" / "keysmith"
+    keysmith_dir.mkdir(parents=True)
+    sentinel = "TOKEN_SENTINEL_backup_content_deadbeef"
+    backup = keysmith_dir / "rules.md.bak_20260814_120000"
+    backup.write_text(sentinel + "\n", encoding="utf-8")
+
+    result = run_cli(["backups", "--scope", "user", "--json"], home=home)
+    payload = parse_json(result)
+
+    assert payload["ok"] is True
+    assert sentinel not in result.stdout
+    assert payload["backups"]
+    assert all("content" not in entry for entry in payload["backups"])
+    assert any(entry["backup_path"] == str(backup) for entry in payload["backups"])
+
+
 def test_backups_project_scope_filter(tmp_path):
     home = tmp_path / "home"
     project = tmp_path / "repo"
