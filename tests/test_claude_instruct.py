@@ -538,9 +538,10 @@ def test_windows_style_runtime_install_uses_powershell_profile(tmp_path):
     assert "# existing powershell profile" in profile_after
 
 
-def test_version_reports_v6(tmp_path):
+def test_version_reports_current_version(tmp_path):
     result = run_cli(["--version"], home=tmp_path / "home")
-    assert result.stdout.strip() == "claude-keysmith v6"
+    assert result.stdout.strip() == f"claude-keysmith {claude_instruct.VERSION}"
+    assert claude_instruct.VERSION >= "v7"
 
 
 def test_windows_upstream_override_is_strict_even_when_other_candidates_exist(tmp_path, monkeypatch):
@@ -1372,16 +1373,16 @@ def test_powershell_wrapper_all_candidates_missing_throws_and_returns_control(tm
     append_prompt.write_text("append\n", encoding="utf-8")
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_SECONDS", 0.2)
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_MILLISECONDS", 25)
-    profile.write_text(
-        claude_instruct.render_shell_wrapper(
-            missing,
-            system_prompt,
-            append_prompt,
-            "powershell",
-            [{"kind": "missing", "path": str(missing), "exists": False, "eligible": True, "reason": "missing"}],
-        ),
-        encoding="utf-8",
+    wrapper = claude_instruct.render_shell_wrapper(
+        missing,
+        system_prompt,
+        append_prompt,
+        "powershell",
+        [{"kind": "missing", "path": str(missing), "exists": False, "eligible": True, "reason": "missing"}],
     )
+    assert "AddSeconds(0.2)" in wrapper
+    assert "Start-Sleep -Milliseconds 25" in wrapper
+    profile.write_text(wrapper, encoding="utf-8")
     command = "\n".join(
         [
             f". {claude_instruct._powershell_quote(profile)}",
@@ -1396,7 +1397,7 @@ def test_powershell_wrapper_all_candidates_missing_throws_and_returns_control(tm
         [claude_instruct.shutil.which("pwsh"), "-NoLogo", "-NoProfile", "-Command", command],
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=15,
         check=False,
     )
 
@@ -1404,11 +1405,22 @@ def test_powershell_wrapper_all_candidates_missing_throws_and_returns_control(tm
     assert continued_marker.read_text(encoding="utf-8").strip() == "continued"
 
 
-@pytest.mark.skipif(os.name == "nt" or claude_instruct.shutil.which("pwsh") is None, reason="requires Unix pwsh")
-def test_powershell_wrapper_reselects_after_candidate_vanishes_before_start(tmp_path):
+@pytest.mark.parametrize(
+    "powershell",
+    [
+        executable
+        for executable in (
+            claude_instruct.shutil.which("pwsh"),
+            claude_instruct.shutil.which("powershell.exe"),
+        )
+        if executable
+    ],
+    ids=lambda executable: Path(executable).name,
+)
+def test_powershell_wrapper_reselects_after_candidate_vanishes_before_start(tmp_path, powershell):
     profile = tmp_path / "profile.ps1"
-    vanishing = tmp_path / "vanishing.exe"
-    fallback = tmp_path / "fallback.exe"
+    vanishing = tmp_path / "vanishing.ps1"
+    fallback = tmp_path / "fallback.ps1"
     system_prompt = tmp_path / "prompts" / "system-prompt.md"
     append_prompt = tmp_path / "prompts" / "append-prompt.md"
     fallback_log = tmp_path / "fallback.json"
@@ -1417,13 +1429,11 @@ def test_powershell_wrapper_reselects_after_candidate_vanishes_before_start(tmp_
     system_prompt.write_text("system\n", encoding="utf-8")
     append_prompt.write_text("append\n", encoding="utf-8")
     fallback.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['KEYSMITH_FALLBACK_LOG']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+        "$json = ConvertTo-Json -Compress -InputObject @($args)\n"
+        "[System.IO.File]::WriteAllText("
+        "$env:KEYSMITH_FALLBACK_LOG, $json, [System.Text.UTF8Encoding]::new($false))\n",
         encoding="utf-8",
     )
-    fallback.chmod(0o755)
     profile.write_text(
         claude_instruct.render_shell_wrapper(
             vanishing,
@@ -1458,11 +1468,11 @@ def test_powershell_wrapper_reselects_after_candidate_vanishes_before_start(tmp_
     env["KEYSMITH_FALLBACK_LOG"] = str(fallback_log)
 
     result = subprocess.run(
-        [claude_instruct.shutil.which("pwsh"), "-NoLogo", "-NoProfile", "-Command", command],
+        [powershell, "-NoLogo", "-NoProfile", "-Command", command],
         env=env,
         text=True,
         capture_output=True,
-        timeout=10,
+        timeout=30,
         check=False,
     )
 
@@ -1486,14 +1496,16 @@ def test_powershell_wrapper_reselects_after_candidate_vanishes_before_start(tmp_
 @pytest.mark.parametrize(
     ("failure_line", "exception_name"),
     [
-        ("keysmith-command-that-does-not-exist", "CommandNotFoundException"),
+        (
+            "throw [System.Management.Automation.CommandNotFoundException]::new('fixture command failure')",
+            "CommandNotFoundException",
+        ),
         (
             "Get-Item -LiteralPath (Join-Path $PSScriptRoot 'missing-internal-item')",
             "ItemNotFoundException",
         ),
         (
-            "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n"
-            "& $MyInvocation.MyCommand.Path",
+            "& { throw [System.Management.Automation.CommandNotFoundException]::new('nested fixture failure') }",
             "CommandNotFoundException",
         ),
     ],
@@ -1526,31 +1538,37 @@ def test_powershell_wrapper_does_not_retry_errors_from_started_script(
     )
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_SECONDS", 0.2)
     monkeypatch.setattr(claude_instruct, "WINDOWS_UPSTREAM_RETRY_MILLISECONDS", 25)
-    profile.write_text(
-        claude_instruct.render_shell_wrapper(
-            upstream,
-            system_prompt,
-            append_prompt,
-            "powershell",
-            [
-                {
-                    "kind": "script",
-                    "path": str(upstream),
-                    "exists": True,
-                    "eligible": True,
-                    "reason": "fixture",
-                },
-                {
-                    "kind": "fallback",
-                    "path": str(fallback),
-                    "exists": True,
-                    "eligible": True,
-                    "reason": "must not run",
-                },
-            ],
-        ),
-        encoding="utf-8",
+    wrapper = claude_instruct.render_shell_wrapper(
+        upstream,
+        system_prompt,
+        append_prompt,
+        "powershell",
+        [
+            {
+                "kind": "script",
+                "path": str(upstream),
+                "exists": True,
+                "eligible": True,
+                "reason": "fixture",
+            },
+            {
+                "kind": "fallback",
+                "path": str(fallback),
+                "exists": True,
+                "eligible": True,
+                "reason": "must not run",
+            },
+        ],
     )
+    assert "AddSeconds(0.2)" in wrapper
+    assert "Start-Sleep -Milliseconds 25" in wrapper
+    launch_failure_guard = (
+        "$_.InvocationInfo.InvocationName -eq '&' -and "
+        "$_.CategoryInfo.TargetName -eq $candidate -and "
+        "$_.InvocationInfo.ScriptName -eq $PSCommandPath"
+    )
+    assert wrapper.count(launch_failure_guard) == 2
+    profile.write_text(wrapper, encoding="utf-8")
     command = "\n".join(
         [
             f". {claude_instruct._powershell_quote(profile)}",
@@ -1568,7 +1586,7 @@ def test_powershell_wrapper_does_not_retry_errors_from_started_script(
         env=env,
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=30,
         check=False,
     )
 

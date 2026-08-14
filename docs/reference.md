@@ -31,7 +31,7 @@
 | `~/.claude/settings.json` | 只对齐顶层 `systemPrompt`；仅在显式使用 `--max-tokens N` 时写入顶层 `max_tokens`；保留其他 JSON 字段 |
 | `~/.zshrc`（macOS / Linux）或 PowerShell profile（Windows） | 只管理 `# >>> claude-keysmith runtime >>>` 与结束标记之间的 wrapper；写入前备份 |
 
-在 macOS / Linux 上，wrapper 是 `claude()` shell 函数；在 Windows PowerShell 上，wrapper 是 profile 中的 `function global:claude`。v6 正式支持 Windows PowerShell 5.1 与 PowerShell 7；CMD 和 Git Bash 不属于 managed wrapper 支持范围。
+在 macOS / Linux 上，wrapper 是 `claude()` shell 函数；在 Windows PowerShell 上，wrapper 是 profile 中的 `function global:claude`。自 v6 起正式支持 Windows PowerShell 5.1 与 PowerShell 7；CMD 和 Git Bash 不属于 managed wrapper 支持范围。
 
 Windows profile 解析从实际用户级 `PSModulePath` 的首个可识别条目派生：条目中的 `WindowsPowerShell/Modules` 对应 Windows PowerShell 5.1 profile，`PowerShell/Modules` 对应 PowerShell 7 profile，并保留该条目前缀，因此支持重定向后的 Documents 目录。全新环境中，即使 `PSModulePath` 已声明的用户 `Modules` 目录尚未创建，也会按路径结构识别；没有可识别条目时，安装会停止并要求通过 `CLAUDE_KEYSMITH_SHELL_RC` 指定目标 profile，不会回退猜测。
 
@@ -119,6 +119,8 @@ python3 claude-instruct.py restore \
 
 恢复会先为当前 target 创建新的 `pre_restore` 安全备份。
 
+从 v7 起，写操作由 scope 本地的 durable journal（`.journal-<uuid>.json`）与排他写锁（`.keysmith.lock`）保护；崩溃或 Ctrl+C 中断后运行 `recover --scope …`（默认预览，`--yes` 执行，幂等）回滚未提交事务，`backups --scope … --json` 只读枚举受控备份。完整设计见 [`transaction-recovery.md`](transaction-recovery.md)，JSON 字段见 [`json-contract.md`](json-contract.md)。
+
 ## 状态与排障
 
 ```bash
@@ -139,14 +141,14 @@ runtime status 保留已有字段，并增加：
 | `upstream_candidates` | Windows 动态解析候选；每项包含 `kind`、`path`、`exists`、`eligible`、`reason` |
 | `upstream_path` | 当前选中的上游入口；没有可用入口时为空 |
 | `upstream_exists` | 当前是否至少有一个可启动的上游入口 |
-| `shell_wrapper_current` | profile 中的 managed wrapper 是否匹配 v6 当前模板 |
+| `shell_wrapper_current` | profile 中的 managed wrapper 是否匹配 v7 当前模板 |
 | `legacy_launcher_detected` | 是否发现尚未迁移的旧 Windows launcher |
 | `legacy_launcher_paths` | 发现的旧 launcher 路径列表 |
 | `legacy_launcher_conflict` | 是否发现所有权无法确认的同名 Windows launcher |
 | `legacy_launcher_conflict_paths` | 发生所有权冲突的 launcher 路径列表 |
 | `upgrade_required` | 当前 runtime 是否需要重新安装或迁移 |
 
-`runtime_ready` 只有在 system/append prompt 文件完整、settings 对齐、managed wrapper 匹配 v6 当前模板、至少一个上游入口存在，并且没有未迁移或冲突的旧 launcher 时才为 `true`。它不表示某个特定 CLI 会话、模型提供方或 API 网关一定会以预期方式处理请求。
+`runtime_ready` 只有在 system/append prompt 文件完整、settings 对齐、managed wrapper 匹配 v7 当前模板、至少一个上游入口存在，并且没有未迁移或冲突的旧 launcher 时才为 `true`。它不表示某个特定 CLI 会话、模型提供方或 API 网关一定会以预期方式处理请求。
 
 `doctor` 仅报告安装类型、相关路径、上游候选拒绝原因和建议的修复动作。它不会在文本、stderr 或 JSON 中回显 Base URL、token、cookie 等潜在凭证。
 

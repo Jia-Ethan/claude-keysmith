@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBundleCommand": "node scripts/verify-bundle-config.mjs --allow-bundle-overlay"
+  },
+  "bundle": {
+    "active": true,
+    "externalBin": ["binaries/claude-keysmith-cli"]
+  }
+}

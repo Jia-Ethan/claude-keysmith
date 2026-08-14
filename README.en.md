@@ -10,6 +10,7 @@
   <a href="README.md">简体中文</a> ·
   <a href="docs/reference.md">Reference</a> ·
   <a href="docs/agent-install.md">Agent install</a> ·
+  <a href="docs/desktop-gui.md">Desktop client (beta)</a> ·
   <a href="LICENSE">License</a>
 </p>
 
@@ -77,6 +78,21 @@ Optional Windows overrides are `CLAUDE_KEYSMITH_HOME`, `CLAUDE_KEYSMITH_SHELL`, 
 
 Do not execute `curl | python`. Download or clone, inspect the script and examples, then run it locally.
 
+## Desktop client (beta)
+
+`gui/` contains the desktop client: `0.1.0-beta.1`, channel `beta`, **unsigned and unreleased**. Tauri 2 + React 19, embedding a PyInstaller sidecar built from the same CLI source, with four pages: Dashboard / a 3-step Deploy wizard / Manage (uninstall, controlled-backup restore, recover) / Settings.
+
+- Architecture, process boundary, and pages: [`docs/desktop-gui.md`](docs/desktop-gui.md); engineering spec: [`gui/SPEC.md`](gui/SPEC.md) (Simplified Chinese).
+- The GUI consumes only the CLI `--json` contract (`claude-keysmith/v1`); every write is preview → confirm → `--yes`, and restore uses only the controlled backups enumerated by `backups --json`.
+- Platforms: macOS Apple Silicon builds `.app` / `.dmg`; Windows x64 NSIS now passes native CI build, silent install/uninstall, and frozen-sidecar smoke, while physical visible-UI, SmartScreen, and no-WebView2 acceptance remain pending; no Linux GUI, no auto-update, no signing/notarization. See [`docs/platform-support.md`](docs/platform-support.md) and [`docs/beta-acceptance.md`](docs/beta-acceptance.md).
+
+## CLI automation interface (new in v7)
+
+- Every command supports stable `--json` output: `install` / `status` / `doctor` / `uninstall` / `restore`, plus the new read-only `backups` (enumerates keysmith-controlled backups) and `recover` (previews/executes interrupted-transaction recovery, idempotent). Contract reference: [`docs/json-contract.md`](docs/json-contract.md) (Simplified Chinese).
+- Writes are now protected by a scope-local durable journal (`.journal-<uuid>.json`) and an exclusive write lock (`.keysmith.lock`): interrupted pre-commit transactions roll back in reverse order, committed transactions are never reversed, and any insufficient evidence fails closed. Design: [`docs/transaction-recovery.md`](docs/transaction-recovery.md) (Simplified Chinese).
+- v7 unix-wrapper fix: on macOS / Linux the `claude()` wrapper re-resolves the Claude entry point on every invocation (keeps the resolved path as a fast path; when it disappears, re-resolves via `command -v claude` with zsh `disable -f`/`enable -f` guards and a `command -v -p` fallback, returning 127 with a clean diagnostic when nothing resolves), so a versioned directory baked in by `command -v` symlink resolution can no longer break the wrapper after a Claude update.
+- `--max-tokens` is now validated as a positive integer (argparse `type=positive_int`); 0, negatives, and non-numeric values get a clean usage error.
+
 ## Files it changes
 
 | Path | Change |
@@ -118,8 +134,10 @@ python3 claude-instruct.py restore \
 | Situation | Action |
 | --- | --- |
 | Unsure what would change | Run the same `install` or `uninstall` command without `--yes` and inspect dry-run output |
+| A write was interrupted (crash / Ctrl+C) | Run `recover --scope … --json` to preview residue and planned repairs, then add `--yes` to execute; safe to repeat |
+| Need a file back from before an overwrite | Run `backups --scope … --json` to list controlled backups, then `restore --target … --backup … --yes` |
 | Block or instruction-file state is wrong | Run `status --scope … --json` and check target path, block, and instruction file |
-| Windows reports `required file is missing` after an update | Re-run runtime install with v6; inspect the legacy-launcher migration in dry-run, then add `--yes`, reload the profile, and run `status --json` plus `doctor --json` |
+| Windows reports `required file is missing` after an update | Re-run runtime install with the current version; inspect the legacy-launcher migration in dry-run, then add `--yes`, reload the profile, and run `status --json` plus `doctor --json` |
 | Runtime appears inactive | Run `source ~/.zshrc` on macOS / Linux or `. $PROFILE` on Windows, then `doctor --json`; inspect prompts, settings, wrapper, upstream entry point, and legacy-launcher state |
 | Need rollback | Use `restore` with the matching timestamped backup; it first backs up the current target |
 
@@ -132,11 +150,11 @@ python .\claude-instruct.py install --scope user --runtime --yes
 python .\claude-instruct.py status --scope user --runtime --json
 ```
 
-`status --runtime --json` preserves existing fields and adds `upstream_candidates`, `upstream_path`, `upstream_exists`, `shell_wrapper_current`, `legacy_launcher_detected`, `legacy_launcher_paths`, `legacy_launcher_conflict`, `legacy_launcher_conflict_paths`, and `upgrade_required`. `runtime_ready` is `true` only when both prompts are complete, settings are aligned, the wrapper matches the current v6 template, an upstream entry point exists, and no unmigrated or conflicting legacy launcher remains.
+`status --runtime --json` preserves existing fields and adds `upstream_candidates`, `upstream_path`, `upstream_exists`, `shell_wrapper_current`, `legacy_launcher_detected`, `legacy_launcher_paths`, `legacy_launcher_conflict`, `legacy_launcher_conflict_paths`, and `upgrade_required`. `runtime_ready` is `true` only when both prompts are complete, settings are aligned, the wrapper matches the current template, an upstream entry point exists, and no unmigrated or conflicting legacy launcher remains.
 
 ## Compatibility and limits
 
-- Python 3.8+ is recommended. The runtime wrapper supports zsh on macOS / Linux and Windows PowerShell 5.1 / PowerShell 7. CMD and Git Bash are outside the v6 managed-wrapper support scope.
+- Python 3.8+ is recommended. The runtime wrapper supports zsh on macOS / Linux and Windows PowerShell 5.1 / PowerShell 7. CMD and Git Bash are outside the managed-wrapper support scope.
 - Windows checks a strict override, native `~/.local/bin/claude.exe`, non-npm-prefix WinGet/native executables on PATH, an npm package `bin/claude.exe`, and finally npm shim fallbacks; legacy `.local/bin/claude.ps1/.cmd` entries are recorded as ineligible and excluded.
 - Only keysmith-owned HTML comment blocks are managed; other memory content is preserved.
 - It does not manage Claude Code binaries, running processes, network settings, MCP, credentials, Base URL, hooks, or permissions.

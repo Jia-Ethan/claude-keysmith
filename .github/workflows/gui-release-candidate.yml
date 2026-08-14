@@ -1,0 +1,627 @@
+# 桌面 GUI 发布候选构建：只产出候选产物（artifact），不打 tag、不创建
+# Release、不使用发布权限或 secrets。仅 main 分支 PR 和手动触发，避免
+# 每次 push 消耗 Windows / macOS runner。
+#
+# 产物均无发行身份签名：Windows 无 Authenticode；macOS 仅 ad-hoc，
+# 无 Developer ID / notarization；两端均无自动更新。
+# PyInstaller sidecar 必须原生构建（build-sidecar.mjs 强制 host 校验）；
+# macOS job 依赖 GitHub 托管 macos-latest 为 arm64 镜像（macos-26-arm64，
+# 已在本仓库 CI 日志核实），并在构建前显式断言，不匹配立即失败。
+name: gui-release-candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact main commit to build; prevents branch or stale-SHA candidates
+        required: true
+        type: string
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.14"
+  NODE_VERSION: "22"
+
+jobs:
+  provenance:
+    name: Candidate provenance gate
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_class: ${{ steps.validate.outputs.artifact_class }}
+      pr_head_sha: ${{ steps.validate.outputs.pr_head_sha }}
+      release_eligible: ${{ steps.validate.outputs.release_eligible }}
+    steps:
+      - name: Validate event, ref, and source commit
+        id: validate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+          GITHUB_REF_VALUE: ${{ github.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            {
+              echo "artifact_class=pr-validation"
+              echo "release_eligible=false"
+              echo "pr_head_sha=$PR_HEAD_SHA"
+            } >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            [ "$GITHUB_REF_VALUE" = "refs/heads/main" ] || {
+              echo "manual candidates must run from refs/heads/main" >&2
+              exit 1
+            }
+            [ "$EXPECTED_SHA" = "$GITHUB_SHA_VALUE" ] || {
+              echo "expected_sha=$EXPECTED_SHA does not match main checkout $GITHUB_SHA_VALUE" >&2
+              exit 1
+            }
+            {
+              echo "artifact_class=main-candidate"
+              echo "release_eligible=true"
+              echo "pr_head_sha="
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "unsupported event: $EVENT_NAME" >&2
+            exit 1
+          fi
+
+  windows-x64:
+    name: Windows x64 NSIS candidate
+    needs: provenance
+    runs-on: windows-latest
+    env:
+      ARTIFACT_CLASS: ${{ needs.provenance.outputs.artifact_class }}
+      PR_HEAD_SHA: ${{ needs.provenance.outputs.pr_head_sha }}
+      RELEASE_ELIGIBLE: ${{ needs.provenance.outputs.release_eligible }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: CLI gate (py_compile + pytest)
+        shell: pwsh
+        run: |
+          python -m pip install "pytest>=7.4,<10"
+          python -m py_compile claude-instruct.py
+          python -m pytest -q tests
+
+      - name: Install sidecar build requirements
+        shell: pwsh
+        run: python -m pip install -r gui/requirements-build.txt
+
+      - name: Frontend gate (npm ci + vitest)
+        shell: pwsh
+        working-directory: gui
+        run: |
+          npm ci
+          npm test
+
+      - name: Rust gate (fmt + check + test)
+        shell: pwsh
+        working-directory: gui/src-tauri
+        run: |
+          cargo fmt --check
+          cargo check --locked
+          cargo test --locked
+
+      - name: Build NSIS bundle (native sidecar + installer)
+        shell: pwsh
+        working-directory: gui
+        run: npm run bundle
+
+      - name: Verify native install and collect candidate artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $stage = Join-Path $env:RUNNER_TEMP 'candidate'
+          if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $sidecar = 'gui/src-tauri/binaries/claude-keysmith-cli-x86_64-pc-windows-msvc.exe'
+          if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw "sidecar missing: $sidecar" }
+
+          $nsisDir = 'gui/src-tauri/target/release/bundle/nsis'
+          $installers = @(Get-ChildItem -LiteralPath $nsisDir -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw "expected exactly one NSIS installer under $nsisDir, found $($installers.Count)" }
+          $installer = $installers[0]
+
+          $guiVersion = (Get-Content gui/package.json -Raw | ConvertFrom-Json).version
+          $cliVersion = (& $sidecar --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $cliVersion -ne 'claude-keysmith v7') { throw "sidecar --version smoke failed: $cliVersion" }
+
+          $installerSignature = (Get-AuthenticodeSignature -LiteralPath $installer.FullName).Status.ToString()
+          if ($installerSignature -ne 'NotSigned') { throw "candidate must remain unsigned; installer signature is $installerSignature" }
+
+          # NSIS supports a silent current-user install with /D as the final argument.
+          # Use a runner-temp path and /NS so the smoke leaves no shortcuts behind.
+          $installDir = Join-Path $env:RUNNER_TEMP 'claude-keysmith-rc-install'
+          if (Test-Path -LiteralPath $installDir) { throw "refusing to reuse install smoke directory: $installDir" }
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', '/NS', "/D=$installDir") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "silent NSIS install failed with exit code $($install.ExitCode)" }
+
+          $installedGui = Join-Path $installDir 'claude-keysmith-gui.exe'
+          $installedSidecar = Join-Path $installDir 'claude-keysmith-cli.exe'
+          $uninstaller = Join-Path $installDir 'uninstall.exe'
+          foreach ($required in @($installedGui, $installedSidecar, $uninstaller)) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "installed file missing: $required" }
+          }
+
+          $installedCliVersion = (& $installedSidecar --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $installedCliVersion -ne 'claude-keysmith v7') {
+            throw "installed sidecar smoke failed: $installedCliVersion"
+          }
+          $sourceSidecarHash = (Get-FileHash -LiteralPath $sidecar -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installedSidecarHash = (Get-FileHash -LiteralPath $installedSidecar -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sourceSidecarHash -ne $installedSidecarHash) { throw 'installed sidecar does not match the bundled source sidecar' }
+
+          foreach ($unsignedFile in @($installedGui, $installedSidecar, $uninstaller)) {
+            $status = (Get-AuthenticodeSignature -LiteralPath $unsignedFile).Status.ToString()
+            if ($status -ne 'NotSigned') { throw "candidate must remain unsigned; $unsignedFile signature is $status" }
+          }
+
+          # Exercise the installed onefile sidecar, including bundled examples,
+          # privacy-safe reads, and the generated PowerShell wrapper.
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'installed-sidecar-smoke'
+          $homeDir = Join-Path $fixtureRoot 'home with spaces'
+          $profilePath = Join-Path $fixtureRoot "profile's dir\Microsoft.PowerShell_profile.ps1"
+          $fakeClaude = Join-Path $fixtureRoot 'upstream claude.cmd'
+          $argLog = Join-Path $fixtureRoot 'args.log'
+          $verifyWrapper = Join-Path $fixtureRoot 'verify-wrapper.ps1'
+          $rulesV1 = Join-Path $fixtureRoot 'restore-smoke-v1.md'
+          $rulesV2 = Join-Path $fixtureRoot 'restore-smoke-v2.md'
+          New-Item -ItemType Directory -Force -Path $homeDir, (Split-Path -Parent $profilePath) | Out-Null
+
+          "restore smoke v1`n" | Set-Content -LiteralPath $rulesV1 -Encoding UTF8 -NoNewline
+          "restore smoke v2`n" | Set-Content -LiteralPath $rulesV2 -Encoding UTF8 -NoNewline
+
+          @'
+          @echo off
+          > "%KEYSMITH_ARG_LOG%" echo %*
+          exit /b 23
+          '@ | Set-Content -LiteralPath $fakeClaude -Encoding Ascii
+
+          $env:HOME = $homeDir
+          $env:CLAUDE_KEYSMITH_HOME = $homeDir
+          $env:CLAUDE_KEYSMITH_SHELL = 'powershell'
+          $env:CLAUDE_KEYSMITH_SHELL_RC = $profilePath
+          $env:CLAUDE_KEYSMITH_CLAUDE_BIN = $fakeClaude
+          $env:KEYSMITH_ARG_LOG = $argLog
+
+          $claudeDir = Join-Path $homeDir '.claude'
+          New-Item -ItemType Directory -Force -Path $claudeDir | Out-Null
+          [ordered]@{
+            model = 'opus'
+            env = [ordered]@{
+              ANTHROPIC_BASE_URL = 'https://private.example.invalid/BASE_URL_SENTINEL'
+              ANTHROPIC_AUTH_TOKEN = 'TOKEN_SENTINEL_6f9f'
+              COOKIE = 'COOKIE_SENTINEL_91e2'
+            }
+          } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $claudeDir 'settings.json') -Encoding UTF8
+
+          $runtimeInstall = (& $installedSidecar install --scope user --runtime --yes --json | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "installed sidecar runtime install failed: $runtimeInstall" }
+          $runtimeInstallJson = $runtimeInstall | ConvertFrom-Json
+          if (-not $runtimeInstallJson.ok -or $runtimeInstallJson.mode -ne 'execute') {
+            throw "installed sidecar returned an invalid install contract: $runtimeInstall"
+          }
+
+          # Exercise scoped restore through the exact target_path / backup_path
+          # pair exposed by the installed frozen sidecar.
+          foreach ($rulesFile in @($rulesV1, $rulesV2)) {
+            $installOutput = (& $installedSidecar install --scope user --name restore-smoke --file $rulesFile --yes --json | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not (($installOutput | ConvertFrom-Json).ok)) {
+              throw "installed sidecar rule install failed: $installOutput"
+            }
+          }
+
+          $backupsOutput = (& $installedSidecar backups --scope user --json | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "installed sidecar backups failed: $backupsOutput" }
+          $backupsJson = $backupsOutput | ConvertFrom-Json
+          $restoreBackup = @($backupsJson.backups | Where-Object { $_.target_name -eq 'restore-smoke.md' }) | Select-Object -Last 1
+          if (-not $restoreBackup -or -not $restoreBackup.target_path -or -not $restoreBackup.backup_path) {
+            throw "installed backups contract did not expose the restore-smoke target pair: $backupsOutput"
+          }
+
+          $restorePreview = (& $installedSidecar restore --target $restoreBackup.target_path --backup $restoreBackup.backup_path --scope user --json | Out-String).Trim()
+          $restorePreviewJson = $restorePreview | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $restorePreviewJson.ok -or $restorePreviewJson.mode -ne 'preview' -or -not $restorePreviewJson.managed) {
+            throw "installed scoped restore preview failed: $restorePreview"
+          }
+          if ((Get-Content -LiteralPath $restoreBackup.target_path -Raw) -ne (Get-Content -LiteralPath $rulesV2 -Raw)) {
+            throw 'restore preview modified the target'
+          }
+
+          $restoreExecute = (& $installedSidecar restore --target $restoreBackup.target_path --backup $restoreBackup.backup_path --scope user --yes --json | Out-String).Trim()
+          $restoreExecuteJson = $restoreExecute | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $restoreExecuteJson.ok -or $restoreExecuteJson.mode -ne 'execute' -or -not $restoreExecuteJson.managed) {
+            throw "installed scoped restore execute failed: $restoreExecute"
+          }
+          if ((Get-FileHash -LiteralPath $restoreBackup.target_path -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $restoreBackup.backup_path -Algorithm SHA256).Hash) {
+            throw 'restored target does not match the selected managed backup'
+          }
+
+          # A keysmith-owned atomic temp residue must block writes, remain intact
+          # during preview, and be removed only by recover --yes.
+          $atomicResidue = Join-Path $homeDir '.claude\keysmith\.restore-smoke.md.keysmith-tmp-ci.tmp'
+          'partial atomic write' | Set-Content -LiteralPath $atomicResidue -Encoding UTF8
+          $recoveryStatus = (& $installedSidecar status --scope user --runtime --json | Out-String).Trim() | ConvertFrom-Json
+          if (-not $recoveryStatus.recovery_state.recovery_required) { throw 'atomic residue did not require recovery' }
+
+          $blockedWrite = (& $installedSidecar install --scope user --name restore-smoke --file $rulesV2 --yes --json | Out-String).Trim()
+          $blockedExit = $LASTEXITCODE
+          if ($blockedExit -eq 0 -or ($blockedWrite | ConvertFrom-Json).ok) { throw 'atomic residue did not block a write' }
+
+          $recoverPreview = (& $installedSidecar recover --scope user --json | Out-String).Trim()
+          $recoverPreviewJson = $recoverPreview | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $recoverPreviewJson.ok -or -not (Test-Path -LiteralPath $atomicResidue)) {
+            throw "installed recover preview was not read-only: $recoverPreview"
+          }
+          if (-not @($recoverPreviewJson.planned_repairs | Where-Object { $_.action -eq 'cleanup-atomic-temp' })) {
+            throw "installed recover preview omitted atomic cleanup: $recoverPreview"
+          }
+
+          $recoverExecute = (& $installedSidecar recover --scope user --yes --json | Out-String).Trim()
+          $recoverExecuteJson = $recoverExecute | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $recoverExecuteJson.ok -or (Test-Path -LiteralPath $atomicResidue)) {
+            throw "installed recover execute failed: $recoverExecute"
+          }
+
+          $doctorOutput = (& $installedSidecar doctor --json | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "installed sidecar doctor failed: $doctorOutput" }
+          $privacyOutput = "$doctorOutput`n$backupsOutput"
+          foreach ($sentinel in @('BASE_URL_SENTINEL', 'TOKEN_SENTINEL_6f9f', 'COOKIE_SENTINEL_91e2')) {
+            if ($privacyOutput.Contains($sentinel)) { throw "installed read path leaked credential sentinel: $sentinel" }
+          }
+
+          @'
+          $ErrorActionPreference = 'Stop'
+          . $env:CLAUDE_KEYSMITH_SHELL_RC
+          claude 'space value' '--literal=$dollar' 'semi;colon'
+          $upstreamExit = $LASTEXITCODE
+          if ($upstreamExit -ne 23) { throw "wrapper lost upstream exit code: $upstreamExit" }
+          if (-not (Test-Path -LiteralPath $env:KEYSMITH_ARG_LOG -PathType Leaf)) { throw 'upstream was not executed' }
+          $logged = Get-Content -LiteralPath $env:KEYSMITH_ARG_LOG -Raw
+          foreach ($expected in @('--system-prompt-file', '--append-system-prompt-file', 'space value', '--literal=$dollar', 'semi;colon')) {
+            if (-not $logged.Contains($expected)) { throw "missing forwarded argument: $expected`n$logged" }
+          }
+          exit 0
+          '@ | Set-Content -LiteralPath $verifyWrapper -Encoding UTF8
+
+          foreach ($shell in @('powershell.exe', 'pwsh.exe')) {
+            & $shell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $verifyWrapper
+            if ($LASTEXITCODE -ne 0) { throw "$shell installed wrapper smoke failed with $LASTEXITCODE" }
+          }
+
+          $runtimeUninstall = (& $installedSidecar uninstall --scope user --runtime --yes --json | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "installed sidecar runtime uninstall failed: $runtimeUninstall" }
+          if (-not (($runtimeUninstall | ConvertFrom-Json).ok)) { throw "installed sidecar uninstall contract is not ok" }
+
+          # Hosted runners cannot judge visual layout, but they can prove the
+          # installed WebView process starts and the single-instance guard holds.
+          $firstGui = Start-Process -FilePath $installedGui -WorkingDirectory $installDir -PassThru
+          Start-Sleep -Seconds 12
+          $firstGui.Refresh()
+          if ($firstGui.HasExited) { throw "installed GUI exited during startup with $($firstGui.ExitCode)" }
+
+          $secondGui = Start-Process -FilePath $installedGui -WorkingDirectory $installDir -PassThru
+          if (-not $secondGui.WaitForExit(15000)) {
+            Stop-Process -Id $secondGui.Id -Force -ErrorAction SilentlyContinue
+            throw 'second GUI instance did not exit through the single-instance guard'
+          }
+          $firstGui.Refresh()
+          if ($firstGui.HasExited) { throw 'first GUI instance exited when the second instance started' }
+          Stop-Process -Id $firstGui.Id -Force
+          $firstGui.WaitForExit()
+
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "silent NSIS uninstall failed with exit code $($uninstall.ExitCode)" }
+          for ($attempt = 0; $attempt -lt 30 -and (Test-Path -LiteralPath $installDir); $attempt++) {
+            Start-Sleep -Seconds 1
+          }
+          if (Test-Path -LiteralPath $installDir) { throw "silent uninstall left install directory behind: $installDir" }
+          $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\claude-keysmith'
+          if (Test-Path -LiteralPath $uninstallKey) { throw "silent uninstall left registry key behind: $uninstallKey" }
+
+          $installerAsset = Join-Path $stage "claude-keysmith-desktop-$guiVersion-windows-x64-unsigned-setup.exe"
+          Copy-Item -LiteralPath $installer.FullName -Destination $installerAsset
+          $sidecarArchive = Join-Path $stage 'claude-keysmith-cli-v7-windows-x64-unsigned.zip'
+          Compress-Archive -LiteralPath $sidecar -DestinationPath $sidecarArchive
+
+          $files = @(Get-ChildItem -LiteralPath $stage -File | Sort-Object Name)
+          $entries = @()
+          $sums = @()
+          foreach ($f in $files) {
+            $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $entries += [ordered]@{ name = $f.Name; bytes = $f.Length; sha256 = $hash }
+            $sums += "$hash  $($f.Name)"
+          }
+
+          $buildInfo = [ordered]@{
+            gui_version    = $guiVersion
+            cli_version    = $cliVersion
+            source_commit  = $env:GITHUB_SHA
+            target         = 'x86_64-pc-windows-msvc'
+            runner_os      = $env:RUNNER_OS
+            runner_image   = $env:ImageOS
+            workflow_run   = $env:GITHUB_RUN_ID
+            workflow_event = $env:GITHUB_EVENT_NAME
+            artifact_class = $env:ARTIFACT_CLASS
+            release_eligible = [System.Convert]::ToBoolean($env:RELEASE_ELIGIBLE)
+            pr_head_commit = if ($env:PR_HEAD_SHA) { $env:PR_HEAD_SHA } else { $null }
+            signed         = $false
+            authenticode   = 'NotSigned'
+            install_smoke  = $true
+            uninstall_smoke = $true
+            packaged_runtime_smoke = $true
+            scoped_restore_smoke = $true
+            recovery_smoke = $true
+            privacy_smoke = $true
+            gui_process_smoke = $true
+            single_instance_smoke = $true
+            source_sidecar_sha256 = $sourceSidecarHash
+            embedded_sidecar_sha256 = $installedSidecarHash
+            channel        = 'beta'
+            artifacts      = $entries
+          }
+          $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'BUILD_INFO.json') -Encoding UTF8
+          $sumsPath = Join-Path $stage 'SHA256SUMS'
+          [System.IO.File]::WriteAllText(
+            $sumsPath,
+            (($sums -join "`n") + "`n"),
+            [System.Text.Encoding]::ASCII
+          )
+          if ([System.IO.File]::ReadAllBytes($sumsPath) -contains 13) {
+            throw 'SHA256SUMS must use portable LF line endings'
+          }
+
+          Get-Content (Join-Path $stage 'BUILD_INFO.json')
+          Get-Content $sumsPath
+          "STAGE_DIR=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
+
+      - name: Upload Windows candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: claude-keysmith-gui-${{ needs.provenance.outputs.artifact_class }}-windows-x64-${{ github.sha }}
+          path: ${{ env.STAGE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-arm64:
+    name: macOS ARM64 candidate
+    needs: provenance
+    runs-on: macos-latest
+    env:
+      ARTIFACT_CLASS: ${{ needs.provenance.outputs.artifact_class }}
+      PR_HEAD_SHA: ${{ needs.provenance.outputs.pr_head_sha }}
+      RELEASE_ELIGIBLE: ${{ needs.provenance.outputs.release_eligible }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Assert native arm64 runner
+        run: |
+          arch="$(uname -m)"
+          if [ "$arch" != "arm64" ]; then
+            echo "macos-latest runner is $arch, not arm64; refusing to build a wrong-arch candidate" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: CLI gate (py_compile + pytest)
+        run: |
+          python -m pip install "pytest>=7.4,<10"
+          python -m py_compile claude-instruct.py
+          python -m pytest -q tests
+
+      - name: Install sidecar build requirements
+        run: python -m pip install -r gui/requirements-build.txt
+
+      - name: Frontend gate (npm ci + vitest)
+        working-directory: gui
+        run: |
+          npm ci
+          npm test
+
+      - name: Rust gate (fmt + check + test)
+        working-directory: gui/src-tauri
+        run: |
+          cargo fmt --check
+          cargo check --locked
+          cargo test --locked
+
+      - name: Build DMG bundle (native sidecar + app)
+        working-directory: gui
+        run: npm run bundle
+
+      - name: Verify mounted app and collect candidate artifacts
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/candidate"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+
+          sidecar="gui/src-tauri/binaries/claude-keysmith-cli-aarch64-apple-darwin"
+          [ -x "$sidecar" ] || { echo "executable sidecar missing: $sidecar" >&2; exit 1; }
+
+          dmg_dir="gui/src-tauri/target/release/bundle/dmg"
+          dmg_count="$(find "$dmg_dir" -maxdepth 1 -name '*.dmg' -type f | wc -l | tr -d ' ')"
+          [ "$dmg_count" = "1" ] || { echo "expected exactly one DMG under $dmg_dir, found $dmg_count" >&2; exit 1; }
+          dmg="$(find "$dmg_dir" -maxdepth 1 -name '*.dmg' -type f -print)"
+          hdiutil verify "$dmg"
+
+          gui_version="$(node -p "require('./gui/package.json').version")"
+          cli_version="$("$sidecar" --version)"
+          [ "$cli_version" = "claude-keysmith v7" ] || { echo "sidecar version mismatch: $cli_version" >&2; exit 1; }
+          codesign --verify --strict --verbose=4 "$sidecar"
+          source_signature_info="$(codesign -dvvv "$sidecar" 2>&1)"
+          printf '%s\n' "$source_signature_info" | grep -q '^Signature=adhoc$'
+          printf '%s\n' "$source_signature_info" | grep -q '^TeamIdentifier=not set$'
+          if printf '%s\n' "$source_signature_info" | grep -q '^Runtime Version='; then
+            echo "source sidecar unexpectedly enabled hardened runtime" >&2
+            exit 1
+          fi
+          source_sidecar_sha256="$(shasum -a 256 "$sidecar" | cut -d' ' -f1)"
+          source_commit="$(node --input-type=module -e "import('./gui/src/lib/build-info.generated.js').then(({ generatedBuildInfo }) => process.stdout.write(generatedBuildInfo.sourceCommit || ''))")"
+          [ "$source_commit" = "$GITHUB_SHA" ] || { echo "generated build source $source_commit does not match $GITHUB_SHA" >&2; exit 1; }
+
+          mount_dir="$(mktemp -d "$RUNNER_TEMP/claude-keysmith-dmg.XXXXXX")"
+          cleanup_mount() {
+            hdiutil detach "$mount_dir" >/dev/null 2>&1 || true
+            rmdir "$mount_dir" >/dev/null 2>&1 || true
+          }
+          trap cleanup_mount EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg" >/dev/null
+
+          app_count="$(find "$mount_dir" -maxdepth 1 -name '*.app' -type d | wc -l | tr -d ' ')"
+          [ "$app_count" = "1" ] || { echo "expected exactly one app in DMG, found $app_count" >&2; exit 1; }
+          app="$(find "$mount_dir" -maxdepth 1 -name '*.app' -type d -print)"
+          gui_binary="$app/Contents/MacOS/claude-keysmith-gui"
+          embedded_sidecar="$app/Contents/MacOS/claude-keysmith-cli"
+          [ -x "$gui_binary" ] || { echo "GUI executable missing: $gui_binary" >&2; exit 1; }
+          [ -x "$embedded_sidecar" ] || { echo "embedded sidecar missing: $embedded_sidecar" >&2; exit 1; }
+
+          gui_arch="$(lipo -archs "$gui_binary")"
+          embedded_arch="$(lipo -archs "$embedded_sidecar")"
+          [ "$gui_arch" = "arm64" ] || { echo "GUI architecture mismatch: $gui_arch" >&2; exit 1; }
+          [ "$embedded_arch" = "arm64" ] || { echo "embedded sidecar architecture mismatch: $embedded_arch" >&2; exit 1; }
+          embedded_cli_version="$("$embedded_sidecar" --version)"
+          [ "$embedded_cli_version" = "claude-keysmith v7" ] || { echo "embedded sidecar version mismatch: $embedded_cli_version" >&2; exit 1; }
+          codesign --verify --strict --verbose=4 "$embedded_sidecar"
+          embedded_signature_info="$(codesign -dvvv "$embedded_sidecar" 2>&1)"
+          printf '%s\n' "$embedded_signature_info" | grep -q '^Signature=adhoc$'
+          printf '%s\n' "$embedded_signature_info" | grep -q '^TeamIdentifier=not set$'
+          if printf '%s\n' "$embedded_signature_info" | grep -q '^Runtime Version='; then
+            echo "embedded sidecar unexpectedly enabled hardened runtime" >&2
+            exit 1
+          fi
+          embedded_sidecar_sha256="$(shasum -a 256 "$embedded_sidecar" | cut -d' ' -f1)"
+
+          app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          minimum_system_version="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")"
+          [ "$app_version" = "$gui_version" ] || { echo "app version mismatch: $app_version" >&2; exit 1; }
+          [ "$minimum_system_version" = "11.0" ] || { echo "minimum system version mismatch: $minimum_system_version" >&2; exit 1; }
+
+          codesign --verify --deep --strict --verbose=4 "$app"
+          signature_info="$(codesign -dvvv "$app" 2>&1)"
+          printf '%s\n' "$signature_info"
+          printf '%s\n' "$signature_info" | grep -q '^Signature=adhoc$'
+          printf '%s\n' "$signature_info" | grep -q '^TeamIdentifier=not set$'
+          if printf '%s\n' "$signature_info" | grep -q '^Runtime Version='; then
+            echo "candidate unexpectedly enabled hardened runtime; the re-signed PyInstaller onefile sidecar would fail at runtime" >&2
+            exit 1
+          fi
+
+          set +e
+          spctl_output="$(spctl --assess --type execute --verbose=4 "$app" 2>&1)"
+          spctl_status=$?
+          set -e
+          printf '%s\n' "$spctl_output"
+          [ "$spctl_status" -ne 0 ] || { echo "ad-hoc candidate unexpectedly passed Gatekeeper assessment" >&2; exit 1; }
+
+          hdiutil detach "$mount_dir" >/dev/null
+          rmdir "$mount_dir"
+          trap - EXIT
+
+          dmg_asset="$stage/claude-keysmith-desktop-${gui_version}-macos-arm64-unsigned.dmg"
+          cp "$dmg" "$dmg_asset"
+          sidecar_archive="$stage/claude-keysmith-cli-v7-macos-arm64-adhoc.tar.gz"
+          tar -czf "$sidecar_archive" -C "$(dirname "$sidecar")" "$(basename "$sidecar")"
+          tar -tzf "$sidecar_archive" | grep -qx 'claude-keysmith-cli-aarch64-apple-darwin'
+
+          export STAGE_DIR="$stage"
+          export GUI_VERSION="$gui_version"
+          export CLI_VERSION="$cli_version"
+          export SOURCE_COMMIT="$source_commit"
+          export GUI_ARCH="$gui_arch"
+          export SOURCE_SIDECAR_SHA256="$source_sidecar_sha256"
+          export EMBEDDED_SIDECAR_SHA256="$embedded_sidecar_sha256"
+          export MINIMUM_SYSTEM_VERSION="$minimum_system_version"
+          export ARTIFACT_CLASS
+          export PR_HEAD_SHA
+          export RELEASE_ELIGIBLE
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          stage = Path(os.environ["STAGE_DIR"])
+          artifact_paths = sorted(
+              [
+                  next(stage.glob("*.dmg")),
+                  stage / "claude-keysmith-cli-v7-macos-arm64-adhoc.tar.gz",
+              ],
+              key=lambda path: path.name,
+          )
+          entries = []
+          sums = []
+          for path in artifact_paths:
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              entries.append({"name": path.name, "bytes": path.stat().st_size, "sha256": digest})
+              sums.append(f"{digest}  {path.name}")
+
+          build_info = {
+              "gui_version": os.environ["GUI_VERSION"],
+              "cli_version": os.environ["CLI_VERSION"],
+              "source_commit": os.environ["SOURCE_COMMIT"],
+              "target": "aarch64-apple-darwin",
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.popen("uname -m").read().strip(),
+              "runner_image": os.environ.get("ImageOS"),
+              "workflow_run": os.environ["GITHUB_RUN_ID"],
+              "workflow_event": os.environ["GITHUB_EVENT_NAME"],
+              "artifact_class": os.environ["ARTIFACT_CLASS"],
+              "release_eligible": os.environ["RELEASE_ELIGIBLE"].lower() == "true",
+              "pr_head_commit": os.environ.get("PR_HEAD_SHA") or None,
+              "signed": False,
+              "signature": "adhoc",
+              "hardened_runtime": False,
+              "codesign_verified": True,
+              "notarized": False,
+              "gatekeeper_accepted": False,
+              "minimum_system_version": os.environ["MINIMUM_SYSTEM_VERSION"],
+              "gui_arch": os.environ["GUI_ARCH"],
+              "source_sidecar_sha256": os.environ["SOURCE_SIDECAR_SHA256"],
+              "embedded_sidecar_sha256": os.environ["EMBEDDED_SIDECAR_SHA256"],
+              "channel": "beta",
+              "artifacts": entries,
+          }
+          (stage / "BUILD_INFO.json").write_text(json.dumps(build_info, indent=2) + "\n", encoding="utf-8")
+          (stage / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="ascii")
+          PY
+
+          cd "$stage"
+          shasum -a 256 -c SHA256SUMS
+          cat BUILD_INFO.json
+          cat SHA256SUMS
+          echo "STAGE_DIR=$stage" >> "$GITHUB_ENV"
+
+      - name: Upload macOS candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: claude-keysmith-gui-${{ needs.provenance.outputs.artifact_class }}-macos-arm64-${{ github.sha }}
+          path: ${{ env.STAGE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
