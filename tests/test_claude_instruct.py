@@ -1285,6 +1285,7 @@ def test_powershell_wrapper_waits_for_late_upstream_and_returns_control(tmp_path
     system_prompt = tmp_path / "prompt's dir" / "system-prompt.md"
     append_prompt = tmp_path / "prompt's dir" / "append-prompt.md"
     arg_log = tmp_path / "args.json"
+    ready_marker = tmp_path / "wrapper-ready.txt"
     return_marker = tmp_path / "returned.txt"
     profile.parent.mkdir(parents=True)
     system_prompt.parent.mkdir(parents=True)
@@ -1299,10 +1300,10 @@ def test_powershell_wrapper_waits_for_late_upstream_and_returns_control(tmp_path
     )
     profile.write_text(wrapper, encoding="utf-8")
 
-    def create_upstream_later():
-        time.sleep(0.6)
+    def publish_upstream():
         upstream.parent.mkdir(parents=True, exist_ok=True)
-        upstream.write_text(
+        staged_upstream = upstream.with_name(f".{upstream.name}.tmp")
+        staged_upstream.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "from pathlib import Path\n"
@@ -1310,14 +1311,15 @@ def test_powershell_wrapper_waits_for_late_upstream_and_returns_control(tmp_path
             f"raise SystemExit({upstream_exit})\n",
             encoding="utf-8",
         )
-        upstream.chmod(0o755)
+        staged_upstream.chmod(0o755)
+        # Publish the fixture only after it is complete and executable.
+        staged_upstream.replace(upstream)
 
-    creator = threading.Thread(target=create_upstream_later)
-    creator.start()
     command = "\n".join(
         [
             f". {claude_instruct._powershell_quote(profile)}",
             "$PSNativeCommandUseErrorActionPreference = $true",
+            f"Set-Content -LiteralPath {claude_instruct._powershell_quote(ready_marker)} -Value ready",
             "claude 'space value' '--literal=$dollar' 'semi;colon'",
             "$code = $LASTEXITCODE",
             f"Set-Content -LiteralPath {claude_instruct._powershell_quote(return_marker)} -Value $code",
@@ -1326,19 +1328,32 @@ def test_powershell_wrapper_waits_for_late_upstream_and_returns_control(tmp_path
     )
     env = os.environ.copy()
     env["KEYSMITH_ARG_LOG"] = str(arg_log)
+    process = subprocess.Popen(
+        [claude_instruct.shutil.which("pwsh"), "-NoLogo", "-NoProfile", "-Command", command],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
-        result = subprocess.run(
-            [claude_instruct.shutil.which("pwsh"), "-NoLogo", "-NoProfile", "-Command", command],
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=15,
-            check=False,
-        )
-    finally:
-        creator.join(timeout=5)
+        ready_deadline = time.monotonic() + claude_instruct.WINDOWS_UPSTREAM_RETRY_SECONDS + 20
+        while not ready_marker.exists() and process.poll() is None and time.monotonic() < ready_deadline:
+            time.sleep(0.01)
+        if not ready_marker.exists():
+            process.kill()
+            stdout, stderr = process.communicate()
+            raise AssertionError(f"PowerShell wrapper did not become ready:\n{stdout}{stderr}")
+        time.sleep(0.6)
+        publish_upstream()
+        stdout, stderr = process.communicate(timeout=claude_instruct.WINDOWS_UPSTREAM_RETRY_SECONDS + 20)
+    except BaseException:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
+        raise
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert process.returncode == 0, stdout + stderr
+    assert ready_marker.read_text(encoding="utf-8").strip() == "ready"
     assert return_marker.read_text(encoding="utf-8").strip() == str(upstream_exit)
     forwarded = json.loads(arg_log.read_text(encoding="utf-8"))
     assert forwarded[-3:] == ["space value", "--literal=$dollar", "semi;colon"]
