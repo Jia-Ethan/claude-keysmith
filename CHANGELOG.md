@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v7 / Desktop 0.1.0-beta.1 (Pre-release)
 
-发布计划：本节内容将以同批次双 Release 发布——`v7`（正式，CLI）与 `desktop-v0.1.0-beta.1`（Pre-release，GUI beta），指向同一最终 main commit；草稿见 [`docs/release-notes-drafts.md`](docs/release-notes-drafts.md)，发布前置门槛见 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。
+发布计划：本节内容将以同批次双 Pre-release 发布——`v7`（CLI）与 `desktop-v0.1.0-beta.1`（GUI beta），指向同一最终 main commit；草稿见 [`docs/release-notes-drafts.md`](docs/release-notes-drafts.md)，发布前置门槛见 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。
 
 ### JSON 契约、事务恢复层与桌面客户端 (beta)
 
@@ -34,21 +34,21 @@
 
 - `--max-tokens` 经 argparse `type=positive_int` 校验为正整数；0 / 负数 / 非数字给出干净的 usage error。runtime 仍为 user scope 专属。
 
-**桌面客户端 `gui/`（`0.1.0-beta.1`，channel `beta`，未签名，未发布）：**
+**桌面客户端 `gui/`（`0.1.0-beta.1`，channel `beta`，未签名 Pre-release）：**
 
 - Tauri 2 + React 19 + Vite + Tailwind 4 + Radix + Motion；PyInstaller onefile sidecar（`claude-keysmith-cli`）与 CLI 同源构建；react-i18next（zh-CN/en）。
 - 页面：Dashboard / 三步 Deploy 向导 / Manage（uninstall、受控备份 restore、recover、repair）/ Settings。
 - 进程边界：argv 数组调用（无 shell 拼接）、stdout/stderr 各 2 MiB 上限（截断失败关闭）、超时杀整棵进程树（unix 进程组 `kill(-pid)`；windows `taskkill /T /F`）、`kill_on_drop`。
 - 单实例、全局写互斥（操作租约；`execute*` 写路径经 `cliRunExclusive` 持有独占租约）、关闭屏障（queued close，无托盘）；恢复只用 `backups --json` 的受控备份。
-- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 可构建；Windows x64 currentUser NSIS + WebView2 bootstrapper 已通过原生 CI 构建、静默安装/卸载和冻结 sidecar 自动化链，实体机可见 UI、SmartScreen、无 WebView2 与事务强杀恢复仍为发布门禁；无 Linux GUI、无自动更新、无签名/公证/Authenticode、无公开发布。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
+- 平台：macOS Apple Silicon `.app` + 未签名 `.dmg` 与 Windows x64 currentUser NSIS + WebView2 bootstrapper 均已通过原生候选构建和实体机用户路径验收，包括可见 UI、操作中关闭、旧 launcher、事务强杀恢复、无 WebView2、Gatekeeper 与 SmartScreen；无 Linux GUI、无自动更新、无签名/公证/Authenticode。见 `docs/desktop-gui.md`、`gui/SPEC.md`、`docs/platform-support.md`、`docs/beta-acceptance.md`。
 
 ### 发布候选构建链
 
 - `gui-release-candidate` workflow 仅用 `contents: read` 且无 secrets：main PR 自动生成 `release_eligible:false` 的验证 artifact；合并后必须在 main 上传入精确 `expected_sha` 才能生成 `release_eligible:true` 候选。Windows x64 与 macOS ARM64 先跑 CLI / 前端 / Rust 全部门禁，再原生构建 PyInstaller sidecar 与 NSIS / DMG，核验安装/卸载或挂载、版本、架构、签名状态、source commit 与哈希后上传 artifact；不打 tag、不建 Release。
 - Windows 候选在原生 runner 完成静默 currentUser 安装/卸载、冻结 sidecar runtime、PowerShell 5.1 / 7 wrapper、scoped restore、原子残留 recover、隐私、GUI 进程与单实例 smoke；另以 source-CLI pytest 覆盖旧 launcher 迁移/冲突与首个 rename 后强杀恢复，`BUILD_INFO.json` 明确标为 source-CLI 证据。安装器、GUI、sidecar 与 uninstaller 均确认 `NotSigned`。`SHA256SUMS` 强制写为 LF-only，并在上传前拒绝 CR 字节，保证 macOS/Linux 可直接 `shasum -c`。
-- `docs/beta-acceptance.md` 记录 135 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组与 source-CLI 旧 launcher 首次移动后强杀的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链、隔离 npm prefix 的真实 Claude `2.1.231 → 2.1.232` 包版本切换 smoke，以及 macOS GUI Dashboard / Deploy / Manage / 操作中关闭实体机验收；用户安装的 Claude 升级、Gatekeeper 用户视角与 Windows 实体机项目继续保持 PENDING。
-- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；真正阻塞 beta 外发的是 main 候选可追溯性与 `docs/beta-acceptance.md` 中尚未完成的实体机和用户视角验收。
-- `docs/reference.md` 修正残留的 “v6 当前模板” 为 v7；新增 `docs/release-notes-drafts.md`（v7 与 desktop-v0.1.0-beta.1 同批次双 Release 草稿，未写发布日期）。
+- `docs/beta-acceptance.md` 记录 135 / 113 / 7 本地门禁、完整 ad-hoc 签名与 `spctl` 拒绝、真实进程组与 source-CLI 旧 launcher 首次移动后强杀的 recovery-required / 阻塞写入 / 纯只读预览 / 精确回滚链、隔离 npm prefix 与用户安装路径的 Claude 版本切换，以及 macOS / Windows 全部实体机用户路径验收；维护者于 2026-08-15 确认第二节实体机项目全部通过。
+- 发布政策明确区分：无签名 / notarization / Authenticode / 自动更新是 `desktop-v0.1.0-beta.1` 已接受且必须披露的限制；实体机门禁已完成，外发前只需精确 main SHA 的 `release_eligible:true` 候选、完整校验信息与明确发布授权。
+- `docs/reference.md` 修正残留的 “v6 当前模板” 为 v7；新增 `docs/release-notes-drafts.md`（v7 与 desktop-v0.1.0-beta.1 同批次双 Pre-release 草稿，未写发布日期）。
 
 ### Review 修复（本轮）
 
@@ -110,8 +110,8 @@ python .\claude-instruct.py doctor --json
 
 - 本地 `py_compile`、Python 3.9/3.14 全量 pytest 与文档一致性检查通过。
 - GitHub Actions 的 Ubuntu、macOS、Windows × Python 3.8/3.14 矩阵，以及 Windows PowerShell 5.1 / PowerShell 7 wrapper 实际加载与执行均通过。
-- 事故机真实 `claude update` 与人工真实 Ctrl+C 保留为发布后补验边界；子进程返回 130 不等同于真实 Ctrl+C。
-- 已发布的 `v6` tag 对 `.ps1` 上游内部抛出的两类路径异常存在误重试风险；`Unreleased` 已修复，尚待后续版本发布。
+- 用户安装路径的真实 Claude Code 升级已完成验收；人工真实 Ctrl+C 仍保留为独立补验边界，子进程返回 130 不等同于真实 Ctrl+C。
+- 已发布的 `v6` tag 对 `.ps1` 上游内部抛出的两类路径异常存在误重试风险；修复已纳入 `v7` Pre-release。
 
 ## v5 (2026-07-29)
 

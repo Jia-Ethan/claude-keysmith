@@ -80,11 +80,11 @@ Do not execute `curl | python`. Download or clone, inspect the script and exampl
 
 ## Desktop client (beta)
 
-`gui/` contains the desktop client: `0.1.0-beta.1`, channel `beta`, **unsigned and unreleased**. Tauri 2 + React 19, embedding a PyInstaller sidecar built from the same CLI source, with four pages: Dashboard / a 3-step Deploy wizard / Manage (uninstall, controlled-backup restore, recover) / Settings.
+`gui/` contains the desktop client: `0.1.0-beta.1`, channel `beta`, an **unsigned Pre-release**. Tauri 2 + React 19, embedding a PyInstaller sidecar built from the same CLI source, with four pages: Dashboard / a 3-step Deploy wizard / Manage (uninstall, controlled-backup restore, recover) / Settings.
 
 - Architecture, process boundary, and pages: [`docs/desktop-gui.md`](docs/desktop-gui.md); engineering spec: [`gui/SPEC.md`](gui/SPEC.md) (Simplified Chinese).
 - The GUI consumes only the CLI `--json` contract (`claude-keysmith/v1`); every write is preview → confirm → `--yes`, and restore uses only the controlled backups enumerated by `backups --json`.
-- Platforms: macOS Apple Silicon builds `.app` / `.dmg`; Windows x64 NSIS now passes native CI build, silent install/uninstall, and frozen-sidecar smoke, while physical visible-UI, SmartScreen, and no-WebView2 acceptance remain pending; no Linux GUI, no auto-update, no signing/notarization. See [`docs/platform-support.md`](docs/platform-support.md) and [`docs/beta-acceptance.md`](docs/beta-acceptance.md).
+- Platforms: macOS Apple Silicon `.app` / `.dmg` and Windows x64 NSIS both pass native candidate builds and physical user-path acceptance; there is no Linux GUI, auto-update, signing, or notarization. See [`docs/platform-support.md`](docs/platform-support.md) for unsigned-install steps and [`docs/beta-acceptance.md`](docs/beta-acceptance.md) for the acceptance record.
 
 ## CLI automation interface (new in v7)
 

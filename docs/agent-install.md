@@ -81,6 +81,6 @@ python .\claude-instruct.py doctor --json
 
 Windows runtime 写入后，`status --json` 应核对 `upstream_path`、`upstream_exists`、`shell_wrapper_current`、`legacy_launcher_detected`、`legacy_launcher_conflict`、`upgrade_required` 与 `runtime_ready`。`doctor` 只能展示安装类型、路径、候选拒绝原因与修复动作；输出中不得出现 Base URL、token 或 cookie。
 
-验收需要在新 PowerShell 会话中验证正常启动、参数透传与非零退出码；真实 Ctrl+C 中断必须单独人工验证，不能用子进程返回 130 代替。v6 的 Windows PowerShell 5.1、PowerShell 7 wrapper 与跨平台 Actions 已通过；事故机或等价环境的真实 `claude update` 和人工 Ctrl+C 仍属于发布后补验。不要把静态 status 或 dry-run 当作真实运行验收。
+验收需要在新 PowerShell 会话中验证正常启动、参数透传与非零退出码；真实 Ctrl+C 中断必须单独人工验证，不能用子进程返回 130 代替。Windows PowerShell 5.1、PowerShell 7 wrapper、跨平台 Actions 与用户安装路径的真实 Claude Code 升级均已通过；人工 Ctrl+C 仍属于独立补验。不要把静态 status 或 dry-run 当作真实运行验收。
 
 完整文件所有权、撤销与恢复语义见 [运行时参考](reference.md)。

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # 桌面客户端（GUI）架构与操作手册
 
-`gui/` 是 `claude-keysmith` 的桌面客户端，版本 `0.1.0-beta.1`，构建 channel `beta`，**未签名、未发布**，不是稳定版。它是 CLI（`claude-instruct.py`）的可视化封装：所有文件写入都由 CLI 完成，GUI 自身不直接修改任何目标文件。
+`gui/` 是 `claude-keysmith` 的桌面客户端，版本 `0.1.0-beta.1`，构建 channel `beta`，是**未签名 Pre-release**，不是稳定版。它是 CLI（`claude-instruct.py`）的可视化封装：所有文件写入都由 CLI 完成，GUI 自身不直接修改任何目标文件。
 
 - 技术栈：Tauri 2 + React 19 + Vite 6 + Tailwind CSS 4 + Radix UI + Motion；`react-i18next`（zh-CN / en）；`sonner` toast。
 - CLI 载体：PyInstaller onefile sidecar（`claude-keysmith-cli`），与 GUI 同源构建。
