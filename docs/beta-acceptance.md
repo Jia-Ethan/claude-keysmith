@@ -1,9 +1,9 @@
 <!-- markdownlint-disable MD013 -->
 # Beta 验收清单（`0.1.0-beta.1`）
 
-本文区分"已实际取得证据"、"发布前必须补齐的验证"与"本次未签名 beta 已接受的限制"。**本分支不发布任何产物**；外发 `desktop-v0.1.0-beta.1` 前必须完成第二节全部未完成条目。代码签名、公证、Authenticode 与自动更新不属于这次明确标记为未签名 beta 的阻塞项，但必须在产物与发布说明中如实披露。
+本文区分"已实际取得证据"、"实体机最终验收"与"本次未签名 beta 已接受的限制"。维护者于 2026-08-15 确认第二节全部项目通过；外发 `desktop-v0.1.0-beta.1` 前仍须从精确 main SHA 生成 `release_eligible:true` 候选并取得明确发布授权。代码签名、公证、Authenticode 与自动更新不属于这次明确标记为未签名 beta 的阻塞项，但必须通过 Release 标题、产物名称与平台文档如实披露。
 
-验证环境（发布阻塞修复轮，分支 `fix/desktop-gui-p0-recovery`，base `f8b8234f`）：macOS 26.5.2 / Apple Silicon（arm64）实体机；Python 3.14.6 独立 venv（pytest 9.1.1）；Node 25.9.0 / npm 11.12.1（`npm ci`）；rustc 1.93.1。所有 CLI 验证在隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` / `CLAUDE_KEYSMITH_SHELL_RC` 下进行，未触碰真实 `~/.claude` 或真实 shell profile；真实 Claude 版本切换专项仅运行临时 npm prefix 中的 `claude --version`。
+验证环境（发布阻塞修复轮，分支 `fix/desktop-gui-p0-recovery`，base `f8b8234f`）：macOS 26.5.2 / Apple Silicon（arm64）实体机；Python 3.14.6 独立 venv（pytest 9.1.1）；Node 25.9.0 / npm 11.12.1（`npm ci`）；rustc 1.93.1。该轮 CLI 验证全部使用隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` / `CLAUDE_KEYSMITH_SHELL_RC`，版本切换专项只运行临时 npm prefix 中的 `claude --version`；用户安装路径的最终升级验收另见第二节。
 
 ## 一、发布候选轮已取得证据的验证
 
@@ -34,7 +34,7 @@
 ### 未签名状态记录（macOS，真实结果，不伪装）
 
 - `codesign -dvvv <app>`：`Signature=adhoc`，flags `0x2 (adhoc)`，`TeamIdentifier=not set`；整包 `codesign --verify --deep --strict` 通过，但没有 Developer ID 身份、notarization 或 hardened runtime。
-- `spctl --assess --type execute <app>`：**拒绝**（exit 3，`rejected`）。Gatekeeper 不放行是未签名 beta 的预期现状；发布说明必须包含手动放行指引，用户侧提示文案见下方 PENDING 条目。
+- `spctl --assess --type execute <app>`：**拒绝**（exit 3，`rejected`）。Gatekeeper 不放行是未签名 beta 的预期现状；实体机已验证 Finder /“隐私与安全性”人工放行路径，安装步骤保留在 [`platform-support.md`](platform-support.md)。
 
 ### 失败关闭专项（可复现自动化与隔离命令证据）
 
@@ -72,12 +72,14 @@
 - 修复并验证 `status --runtime --json`：旧快路径已消失且 wrapper 其它结构完整时，`shell_wrapper_current=true`、`upstream_exists=true`、`runtime_ready=true`、`upgrade_required=false`。真实 `/Users/ethan/.local/bin/claude` 保持 `2.1.212`，未被调用或修改。
 - 证据目录：`/tmp/ks-claude-switch.c6tIaH`；仅执行 `claude --version`，无登录、凭证或模型请求。
 
-## 二、发布前仍须补齐的验证（未完成不得外发）
+## 二、实体机最终验收（已完成）
+
+维护者于 2026-08-15 确认以下项目全部通过，验收对象为 source commit `df3b8cf7591bf2ad325b01621f2aa9c50ab63843` 的 main 候选（workflow run `31818845300`）。后续发布政策同步仅修改 Markdown 文档，不修改 CLI、GUI、打包配置或依赖；实体机结果可继承到该文档提交后的候选，但新候选仍必须重新通过两平台自动化门禁、source commit 与哈希核验，并至少完成安装器启动 smoke。
 
 ### macOS ARM64 实体机
 
-- [ ] 从干净（或新建隔离）账户打开未签名 `.app` / `.dmg`，确认 Gatekeeper 提示文案可接受并写入发布说明（当前 `spctl` 拒绝状态见上文，需人工记录用户视角文案）。
-- [ ] 用户安装的真实 Claude Code 升级（版本目录切换）后 wrapper 仍可用；上方仅有隔离 npm prefix 的真实包版本切换 smoke，不能替代此项。
+- [x] 从干净（或新建隔离）账户打开未签名 `.app` / `.dmg`，确认 Gatekeeper 拦截符合预期，Finder /“隐私与安全性”人工放行后可正常启动。
+- [x] 用户安装的真实 Claude Code 完成版本目录切换后，managed wrapper 仍能动态重解析并正常调用新入口。
 
 ### Windows x64 原生环境
 
@@ -87,17 +89,17 @@
 - [x] 已安装冻结 sidecar 完成 runtime install/uninstall、PowerShell 5.1 / 7 wrapper 实际加载、scoped restore preview/execute、原子残留 recover 与 doctor/backups 隐私检查。
 - [x] GUI 进程启动并保持存活，第二实例由 single-instance guard 退出；此项只证明进程链，不代表页面视觉与交互验收。
 - [x] Windows Rust 原生测试覆盖 `taskkill /T /F` 杀父子进程树与 2 MiB 输出超限失败关闭。
-- [ ] Windows 实体机可见 UI：安装 → Dashboard/sidecar 探测 → Deploy → Manage uninstall/restore/recover → 操作中关闭。
-- [ ] Windows 实体机旧 launcher 迁移与同名冲突路径（`~/.local/bin/claude.ps1` / `claude.cmd`）；托管 runner 仅将 source-CLI 迁移/冲突测试设为自动门禁。
-- [ ] WebView2 bootstrapper 在无 WebView2 机器上静默安装。
-- [ ] 未签名 SmartScreen 提示文案确认并写入发布说明。
-- [ ] Windows 实体机事务中途强杀后的 pending journal 阻塞、只读 preview 与精确恢复 E2E；托管 runner 另有 source-CLI 首次 launcher 移动后强杀测试，不等同于已安装冻结 sidecar 或可见 UI 验收。
+- [x] Windows 实体机可见 UI：安装 → Dashboard/sidecar 探测 → Deploy → Manage uninstall/restore/recover → 操作中关闭。
+- [x] Windows 实体机旧 launcher 迁移与同名冲突路径（`~/.local/bin/claude.ps1` / `claude.cmd`）。
+- [x] WebView2 bootstrapper 在无 WebView2 机器上完成静默安装。
+- [x] 未签名 SmartScreen 拦截符合预期，核对文件与 SHA-256 后可通过“更多信息 → 仍要运行”完成人工放行。
+- [x] Windows 实体机事务中途强杀后，pending journal 阻塞新写入，recover preview 保持只读，execute 完成精确恢复。
 
 ## 三、发布政策与边界声明
 
 - 本分支仅产出源码、文档与候选构建链；发行打包只用 `npm run bundle`。
-- 候选产物（DMG / NSIS / sidecar / `SHA256SUMS` / `BUILD_INFO.json`）只存在于本地候选目录与 CI artifact，不上传 Release。
-- **本次 beta 已接受限制（不单独阻塞 beta）**：无开发者代码签名、无 macOS notarization、无 Windows Authenticode、无自动更新、无 Linux GUI。产物必须明确标记 `unsigned beta`，附 SHA-256、source commit、Gatekeeper / SmartScreen 实测提示与人工安装说明；不得暗示系统信任链或自动更新能力已经具备。
-- **真正的 beta 发布门禁**：第二节全部未完成验证完成并留存证据，两个目标平台的 main 候选产物与元数据可复核，发布说明完整披露上述限制；任何外发、tag 或 Release 仍需单独明确授权。
+- 候选证据（sidecar / `BUILD_INFO.json` / 全量 `SHA256SUMS`）保留在本地候选目录与 CI artifact；Desktop Pre-release 仅上传 DMG、NSIS 与面向用户的 `SHA256SUMS`，CLI sidecar archive 不作为 `v7` 公共产物。
+- **本次 beta 已接受限制（不单独阻塞 beta）**：无开发者代码签名、无 macOS notarization、无 Windows Authenticode、无自动更新、无 Linux GUI。Release 标题与产物名称必须明确标记 `unsigned beta`，附 SHA-256；人工安装说明保留在 [`platform-support.md`](platform-support.md)，tag 与 `BUILD_INFO.json` 共同绑定 source commit。不得暗示系统信任链或自动更新能力已经具备。
+- **真正的 beta 发布门禁**：实体机验收已完成；外发前必须取得两个目标平台的精确 main SHA 候选并复核元数据、安装器、sidecar、校验清单、版本、架构与签名状态，任何 tag 或 Release 仍需单独明确授权。
 - 若后续改为稳定版或默认面向普通用户分发，macOS Developer ID + notarization 与 Windows Authenticode 应升级为对应平台发布门禁；自动更新仍是独立产品能力，不在本 beta 承诺内。
-- 发布采用同批次双 Release：`v7`（正式，CLI）与 `desktop-v0.1.0-beta.1`（Pre-release，GUI beta），指向同一最终 main commit；第二节全部条目勾选并记录前，`0.1.0-beta.1` 不得对任何外部渠道发布。
+- 发布采用同批次双 Pre-release：`v7`（CLI）与 `desktop-v0.1.0-beta.1`（GUI beta）指向同一最终 main commit；完成精确候选复核并取得明确授权后方可创建 tag 与 GitHub Release。

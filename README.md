@@ -83,11 +83,11 @@ Windows 可用以下可选环境变量覆盖自动检测：`CLAUDE_KEYSMITH_HOME
 
 ### 桌面客户端 (beta)
 
-`gui/` 是本工具的桌面客户端：`0.1.0-beta.1`，channel `beta`，**未签名、未发布**。Tauri 2 + React 19，内嵌 PyInstaller sidecar（与 CLI 同源构建），提供 Dashboard / 三步部署向导 / Manage（卸载、受控备份恢复、recover）/ Settings 四页。
+`gui/` 是本工具的桌面客户端：`0.1.0-beta.1`，channel `beta`，**未签名 Pre-release**。Tauri 2 + React 19，内嵌 PyInstaller sidecar（与 CLI 同源构建），提供 Dashboard / 三步部署向导 / Manage（卸载、受控备份恢复、recover）/ Settings 四页。
 
 - 架构、进程边界与页面说明：[`docs/desktop-gui.md`](docs/desktop-gui.md)；工程规范：[`gui/SPEC.md`](gui/SPEC.md)。
 - GUI 只消费 CLI 的 `--json` 契约（`claude-keysmith/v1`），所有写操作 preview → 确认 → `--yes`，恢复只用 `backups --json` 枚举的受控备份。
-- 平台：macOS Apple Silicon 可构建 `.app` / `.dmg`；Windows x64 NSIS 已通过原生 CI 构建、静默安装/卸载和冻结 sidecar 自动化链，实体机可见 UI、SmartScreen 与无 WebView2 场景仍待验收；无 Linux GUI、无自动更新、无签名/公证。详见 [`docs/platform-support.md`](docs/platform-support.md) 与 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。
+- 平台：macOS Apple Silicon `.app` / `.dmg` 与 Windows x64 NSIS 均已通过原生候选构建及实体机用户路径验收；无 Linux GUI、无自动更新、无签名/公证。未签名安装步骤见 [`docs/platform-support.md`](docs/platform-support.md)，验收记录见 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。
 
 ### CLI 自动化接口（v7 新增）
 
