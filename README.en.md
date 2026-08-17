@@ -36,27 +36,29 @@ The Keysmith series **deploys, verifies, and revokes** custom instructions for l
 | Project | Target | Surface | Conservative install | Desktop |
 | --- | --- | --- | --- | --- |
 | [codex-keysmith](https://github.com/Jia-Ethan/codex-keysmith) | Codex | Global `~/.codex` instructions | Stable CLI Release | Unsigned Beta |
-| **[claude-keysmith](https://github.com/Jia-Ethan/claude-keysmith)** | Claude Code | Project / user `CLAUDE.md` import | Source CLI | Unsigned Beta |
+| **[claude-keysmith](https://github.com/Jia-Ethan/claude-keysmith)** | Claude Code | Project / user `CLAUDE.md` import | Stable v6 source tag | Unsigned Beta |
 | [grok-keysmith](https://github.com/Jia-Ethan/grok-keysmith) | Grok Build | Global `~/.grok/rules` (does not edit `AGENTS.md`) | Stable CLI Release | Unsigned Beta |
 | [zcode-keysmith](https://github.com/Jia-Ethan/zcode-keysmith) | ZCode App | User-dir system-role + wrapper | Source only | None |
 
 ### Install options
 
-1. **Conservative: source CLI.** There is no standalone CLI package. Clone and run `claude-instruct.py`. GitHub Latest stable tag is `v6`; default branch and the Desktop sidecar are `v7` prerelease. Do not `curl | python`.
+1. **Conservative: stable v6 source CLI.** There is no standalone CLI package. Use the command below to clone the `v6` tag, then run `claude-instruct.py`. The default branch and `v7` tag are prereleases, not stable install targets. Do not `curl | python`.
 2. **Easier: unsigned Desktop Beta.** See [desktop-v0.1.0-beta.1](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.1): macOS Apple Silicon DMG and Windows x64 NSIS, embedding the v7 CLI. No Linux GUI, no auto-update, no signing. Steps: [`docs/platform-support.md`](docs/platform-support.md).
 
-### Quick start
+### Quick start (stable v6)
 
 ```bash
-git clone https://github.com/Jia-Ethan/claude-keysmith.git
+git clone --branch v6 --depth 1 https://github.com/Jia-Ethan/claude-keysmith.git
 cd claude-keysmith
-python3 claude-instruct.py --version
+python3 claude-instruct.py --version  # claude-keysmith v6
 python3 claude-instruct.py install --scope project --project-dir /path/to/repo
 python3 claude-instruct.py install --scope project --project-dir /path/to/repo --yes
 python3 claude-instruct.py status --scope project --project-dir /path/to/repo
 ```
 
 Optional user-scope runtime: preview with `install --scope user --runtime`, then add `--yes`. On macOS / Linux run `source ~/.zshrc`; on Windows PowerShell use `python .\\claude-instruct.py` and `. $PROFILE`.
+
+To try the v7 CLI, explicitly select the [v7 prerelease](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/v7) and clone with `--branch v7`; do not use the default branch as a stable install target.
 
 ### What it changes
 
@@ -71,14 +73,21 @@ It does not modify the Claude binary, MCP, hooks, permissions, or credentials. F
 ### How to undo
 
 ```bash
+# v6 / v7: preview project uninstall, then add --yes to execute
 python3 claude-instruct.py uninstall --scope project --project-dir /path/to/repo
 python3 claude-instruct.py uninstall --scope user --runtime --yes
-python3 claude-instruct.py backups --scope user --json
 python3 claude-instruct.py restore --target PATH --backup PATH --yes
-python3 claude-instruct.py recover --scope user
 ```
 
-`uninstall --runtime` does not roll back `settings.json` `systemPrompt`; restore from the pre-install backup when needed. Preview interrupted writes with `recover` before `--yes`.
+Only the v7 prerelease provides backup discovery and interrupted-transaction recovery:
+
+```bash
+python3 claude-instruct.py backups --scope user --json
+python3 claude-instruct.py recover --scope user
+python3 claude-instruct.py recover --scope user --yes
+```
+
+`uninstall --runtime` does not roll back `settings.json` `systemPrompt`; both v6 and v7 can `restore` a known pre-install backup. On v7, preview interrupted writes with `recover` before adding `--yes`.
 
 ### Platforms and Beta limits
 

@@ -36,27 +36,29 @@ Keysmith 系列为本地 AI 工具**安全部署、验证和撤销**自定义指
 | 项目 | 目标工具 | 部署面 | 稳妥安装 | Desktop |
 | --- | --- | --- | --- | --- |
 | [codex-keysmith](https://github.com/Jia-Ethan/codex-keysmith) | Codex | 全局 `~/.codex` 指令 | 稳定 CLI Release | 未签名 Beta |
-| **[claude-keysmith](https://github.com/Jia-Ethan/claude-keysmith)** | Claude Code | 项目 / 用户 `CLAUDE.md` import | 源码 CLI | 未签名 Beta |
+| **[claude-keysmith](https://github.com/Jia-Ethan/claude-keysmith)** | Claude Code | 项目 / 用户 `CLAUDE.md` import | 稳定 v6 源码 tag | 未签名 Beta |
 | [grok-keysmith](https://github.com/Jia-Ethan/grok-keysmith) | Grok Build | 全局 `~/.grok/rules`（不改 `AGENTS.md`） | 稳定 CLI Release | 未签名 Beta |
 | [zcode-keysmith](https://github.com/Jia-Ethan/zcode-keysmith) | ZCode App | 用户目录 system-role + wrapper | 仅源码 | 无 |
 
 ### 安装方式
 
-1. **稳妥：源码 CLI。** 没有独立 CLI 安装包。clone 后运行 `claude-instruct.py`。GitHub Latest 稳定 tag 为 `v6`；默认分支与 Desktop sidecar 为 `v7` 预发布。不要 `curl | python`。
+1. **稳妥：稳定 v6 源码 CLI。** 没有独立 CLI 安装包；按下方命令固定 clone `v6` tag，再运行 `claude-instruct.py`。默认分支与 `v7` tag 均为预发布，不应当作稳定版安装。不要 `curl | python`。
 2. **更易用：未签名 Desktop Beta。** 见 [desktop-v0.1.0-beta.1](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.1)：macOS Apple Silicon DMG 与 Windows x64 NSIS，内嵌 v7 CLI。无 Linux GUI、无自动更新、无签名。步骤见 [`docs/platform-support.md`](docs/platform-support.md)。
 
-### 快速开始
+### 快速开始（稳定 v6）
 
 ```bash
-git clone https://github.com/Jia-Ethan/claude-keysmith.git
+git clone --branch v6 --depth 1 https://github.com/Jia-Ethan/claude-keysmith.git
 cd claude-keysmith
-python3 claude-instruct.py --version
+python3 claude-instruct.py --version  # claude-keysmith v6
 python3 claude-instruct.py install --scope project --project-dir /path/to/repo
 python3 claude-instruct.py install --scope project --project-dir /path/to/repo --yes
 python3 claude-instruct.py status --scope project --project-dir /path/to/repo
 ```
 
 可选 user-scope runtime：先 `install --scope user --runtime` 预览，再加 `--yes`。macOS / Linux 随后 `source ~/.zshrc`；Windows PowerShell 用 `python .\\claude-instruct.py` 并 `. $PROFILE`。
+
+需要试用 v7 CLI 时，请明确使用 [v7 Pre-release](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/v7)，并固定 clone `--branch v7`；不要把默认分支当作稳定安装入口。
 
 ### 会修改什么
 
@@ -71,14 +73,21 @@ python3 claude-instruct.py status --scope project --project-dir /path/to/repo
 ### 如何撤销
 
 ```bash
+# v6 / v7：项目级卸载先预览，确认后加 --yes
 python3 claude-instruct.py uninstall --scope project --project-dir /path/to/repo
 python3 claude-instruct.py uninstall --scope user --runtime --yes
-python3 claude-instruct.py backups --scope user --json
 python3 claude-instruct.py restore --target PATH --backup PATH --yes
-python3 claude-instruct.py recover --scope user
 ```
 
-`uninstall --runtime` 不自动回滚 `settings.json` 的 `systemPrompt`；需要时对安装前备份执行 `restore`。写操作中断用 `recover` 预览后再 `--yes`。
+仅 v7 预发布提供备份枚举和中断事务恢复：
+
+```bash
+python3 claude-instruct.py backups --scope user --json
+python3 claude-instruct.py recover --scope user
+python3 claude-instruct.py recover --scope user --yes
+```
+
+`uninstall --runtime` 不自动回滚 `settings.json` 的 `systemPrompt`；v6 / v7 都可对已知的安装前备份执行 `restore`。v7 写操作中断时，先用 `recover` 预览，再加 `--yes`。
 
 ### 平台与 Beta 限制
 
