@@ -4,6 +4,10 @@
 
 发布计划：本节内容将以同批次双 Pre-release 发布——`v7`（CLI）与 `desktop-v0.1.0-beta.1`（GUI beta），指向同一最终 main commit；草稿见 [`docs/release-notes-drafts.md`](docs/release-notes-drafts.md)，发布前置门槛见 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。
 
+### Docs
+
+- Rewrote the newcomer `README.md` / `README.en.md`: source CLI as the conservative path, unsigned Desktop Beta alongside it, one WARNING, and series links that drop `role-keysmith` and stop calling grok-keysmith an `AGENTS.md` installer.
+
 ### JSON 契约、事务恢复层与桌面客户端 (beta)
 
 **`claude-keysmith/v1` JSON 契约：**
