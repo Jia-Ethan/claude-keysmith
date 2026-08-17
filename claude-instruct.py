@@ -51,7 +51,7 @@ def _resource_base() -> Path:
 
 DEFAULT_EXAMPLE = _resource_base() / "examples" / "claude-project-rules.md"
 DEFAULT_APPEND_EXAMPLE = _resource_base() / "examples" / "claude-append-prompt.md"
-VERSION = "v7"
+VERSION = "v7.1"
 ATOMIC_TEMP_MARKER = ".keysmith-tmp-"
 
 SHELL_BEGIN = "# >>> claude-keysmith runtime >>>"

@@ -1,5 +1,9 @@
 # Changelog
 
+## v7.1 (2026-08-17)
+
+- 重新整理新人安装路径，明确稳定版、预发布版与未签名 Desktop Beta 的区别。
+
 ## v7 / Desktop 0.1.0-beta.1 (Pre-release)
 
 发布计划：本节内容将以同批次双 Pre-release 发布——`v7`（CLI）与 `desktop-v0.1.0-beta.1`（GUI beta），指向同一最终 main commit；草稿见 [`docs/release-notes-drafts.md`](docs/release-notes-drafts.md)，发布前置门槛见 [`docs/beta-acceptance.md`](docs/beta-acceptance.md)。

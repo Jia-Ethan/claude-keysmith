@@ -141,14 +141,14 @@ runtime status 保留已有字段，并增加：
 | `upstream_candidates` | Windows 动态解析候选；每项包含 `kind`、`path`、`exists`、`eligible`、`reason` |
 | `upstream_path` | 当前选中的上游入口；没有可用入口时为空 |
 | `upstream_exists` | 当前是否至少有一个可启动的上游入口 |
-| `shell_wrapper_current` | profile 中的 managed wrapper 是否匹配 v7 当前模板 |
+| `shell_wrapper_current` | profile 中的 managed wrapper 是否匹配 v7.1 当前模板 |
 | `legacy_launcher_detected` | 是否发现尚未迁移的旧 Windows launcher |
 | `legacy_launcher_paths` | 发现的旧 launcher 路径列表 |
 | `legacy_launcher_conflict` | 是否发现所有权无法确认的同名 Windows launcher |
 | `legacy_launcher_conflict_paths` | 发生所有权冲突的 launcher 路径列表 |
 | `upgrade_required` | 当前 runtime 是否需要重新安装或迁移 |
 
-`runtime_ready` 只有在 system/append prompt 文件完整、settings 对齐、managed wrapper 匹配 v7 当前模板、至少一个上游入口存在，并且没有未迁移或冲突的旧 launcher 时才为 `true`。它不表示某个特定 CLI 会话、模型提供方或 API 网关一定会以预期方式处理请求。
+`runtime_ready` 只有在 system/append prompt 文件完整、settings 对齐、managed wrapper 匹配 v7.1 当前模板、至少一个上游入口存在，并且没有未迁移或冲突的旧 launcher 时才为 `true`。它不表示某个特定 CLI 会话、模型提供方或 API 网关一定会以预期方式处理请求。
 
 `doctor` 仅报告安装类型、相关路径、上游候选拒绝原因和建议的修复动作。它不会在文本、stderr 或 JSON 中回显 Base URL、token、cookie 等潜在凭证。
 

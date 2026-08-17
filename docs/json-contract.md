@@ -221,7 +221,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
 | `recovery_state` | `journals`、`journal_count`、`atomic_temp_files`、`atomic_temp_count`、`conflicts`、`lock_present`、`lock_live`、`recovery_required`、`must_recover_before_writes` |
 | `runtime` | 完整 runtime 状态（仅 user scope `--runtime`；非 user scope 为 `{supported: false, reason: ...}`） |
 
-`recovery_state.journals[]` 条目：`{journal_path, journal_id, operation, state, started_at, pid}`。`runtime_ready` 只有在 prompt 文件完整、settings 对齐、wrapper 为当前 v7 模板、上游入口存在且无旧 launcher 冲突时才为 `true`。
+`recovery_state.journals[]` 条目：`{journal_path, journal_id, operation, state, started_at, pid}`。`runtime_ready` 只有在 prompt 文件完整、settings 对齐、wrapper 为当前 v7.1 模板、上游入口存在且无旧 launcher 冲突时才为 `true`。
 
 示例（未安装，user scope + `--runtime`，截选）：
 

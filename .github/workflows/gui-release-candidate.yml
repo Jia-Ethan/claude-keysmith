@@ -151,7 +151,7 @@ jobs:
 
           $guiVersion = (Get-Content gui/package.json -Raw | ConvertFrom-Json).version
           $cliVersion = (& $sidecar --version | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $cliVersion -ne 'claude-keysmith v7') { throw "sidecar --version smoke failed: $cliVersion" }
+          if ($LASTEXITCODE -ne 0 -or $cliVersion -ne 'claude-keysmith v7.1') { throw "sidecar --version smoke failed: $cliVersion" }
 
           $installerSignature = (Get-AuthenticodeSignature -LiteralPath $installer.FullName).Status.ToString()
           if ($installerSignature -ne 'NotSigned') { throw "candidate must remain unsigned; installer signature is $installerSignature" }
@@ -171,7 +171,7 @@ jobs:
           }
 
           $installedCliVersion = (& $installedSidecar --version | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $installedCliVersion -ne 'claude-keysmith v7') {
+          if ($LASTEXITCODE -ne 0 -or $installedCliVersion -ne 'claude-keysmith v7.1') {
             throw "installed sidecar smoke failed: $installedCliVersion"
           }
           $sourceSidecarHash = (Get-FileHash -LiteralPath $sidecar -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -348,7 +348,7 @@ jobs:
 
           $installerAsset = Join-Path $stage "claude-keysmith-desktop-$guiVersion-windows-x64-unsigned-setup.exe"
           Copy-Item -LiteralPath $installer.FullName -Destination $installerAsset
-          $sidecarArchive = Join-Path $stage 'claude-keysmith-cli-v7-windows-x64-unsigned.zip'
+          $sidecarArchive = Join-Path $stage 'claude-keysmith-cli-v7.1-windows-x64-unsigned.zip'
           Compress-Archive -LiteralPath $sidecar -DestinationPath $sidecarArchive
 
           $files = @(Get-ChildItem -LiteralPath $stage -File | Sort-Object Name)
@@ -485,7 +485,7 @@ jobs:
 
           gui_version="$(node -p "require('./gui/package.json').version")"
           cli_version="$("$sidecar" --version)"
-          [ "$cli_version" = "claude-keysmith v7" ] || { echo "sidecar version mismatch: $cli_version" >&2; exit 1; }
+          [ "$cli_version" = "claude-keysmith v7.1" ] || { echo "sidecar version mismatch: $cli_version" >&2; exit 1; }
           codesign --verify --strict --verbose=4 "$sidecar"
           source_signature_info="$(codesign -dvvv "$sidecar" 2>&1)"
           printf '%s\n' "$source_signature_info" | grep -q '^Signature=adhoc$'
@@ -519,7 +519,7 @@ jobs:
           [ "$gui_arch" = "arm64" ] || { echo "GUI architecture mismatch: $gui_arch" >&2; exit 1; }
           [ "$embedded_arch" = "arm64" ] || { echo "embedded sidecar architecture mismatch: $embedded_arch" >&2; exit 1; }
           embedded_cli_version="$("$embedded_sidecar" --version)"
-          [ "$embedded_cli_version" = "claude-keysmith v7" ] || { echo "embedded sidecar version mismatch: $embedded_cli_version" >&2; exit 1; }
+          [ "$embedded_cli_version" = "claude-keysmith v7.1" ] || { echo "embedded sidecar version mismatch: $embedded_cli_version" >&2; exit 1; }
           codesign --verify --strict --verbose=4 "$embedded_sidecar"
           embedded_signature_info="$(codesign -dvvv "$embedded_sidecar" 2>&1)"
           printf '%s\n' "$embedded_signature_info" | grep -q '^Signature=adhoc$'
@@ -558,7 +558,7 @@ jobs:
 
           dmg_asset="$stage/claude-keysmith-desktop-${gui_version}-macos-arm64-unsigned.dmg"
           cp "$dmg" "$dmg_asset"
-          sidecar_archive="$stage/claude-keysmith-cli-v7-macos-arm64-adhoc.tar.gz"
+          sidecar_archive="$stage/claude-keysmith-cli-v7.1-macos-arm64-adhoc.tar.gz"
           tar -czf "$sidecar_archive" -C "$(dirname "$sidecar")" "$(basename "$sidecar")"
           tar -tzf "$sidecar_archive" | grep -qx 'claude-keysmith-cli-aarch64-apple-darwin'
 
@@ -583,7 +583,7 @@ jobs:
           artifact_paths = sorted(
               [
                   next(stage.glob("*.dmg")),
-                  stage / "claude-keysmith-cli-v7-macos-arm64-adhoc.tar.gz",
+                  stage / "claude-keysmith-cli-v7.1-macos-arm64-adhoc.tar.gz",
               ],
               key=lambda path: path.name,
           )

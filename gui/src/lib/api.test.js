@@ -37,16 +37,16 @@ describe("resolveCli", () => {
   it("validates a manual path with version + runtime probes", async () => {
     const result = await api.resolveCli("/x/claude-instruct.py", {
       detect: vi.fn(),
-      getVersion: vi.fn().mockResolvedValue("claude-keysmith v7"),
+      getVersion: vi.fn().mockResolvedValue("claude-keysmith v7.1"),
       getRuntime: vi.fn().mockResolvedValue("python"),
     });
-    expect(result).toEqual({ path: "/x/claude-instruct.py", version: "claude-keysmith v7", runtime: "python" });
+    expect(result).toEqual({ path: "/x/claude-instruct.py", version: "claude-keysmith v7.1", runtime: "python" });
   });
 
   it("falls back to sidecar-first auto detection", async () => {
     const result = await api.resolveCli("", {
       detect: vi.fn().mockResolvedValue({ path: "/app/claude-keysmith-cli", runtime: "bundled" }),
-      getVersion: vi.fn().mockResolvedValue("claude-keysmith v7"),
+      getVersion: vi.fn().mockResolvedValue("claude-keysmith v7.1"),
       getRuntime: vi.fn(),
     });
     expect(result.path).toBe("/app/claude-keysmith-cli");
