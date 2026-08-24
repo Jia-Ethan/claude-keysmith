@@ -1,0 +1,86 @@
+name: Bug report / Bug 报告
+description: Report a reproducible problem / 报告可复现的问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先删除 token、cookie、用户名、私人路径、完整配置和提示词正文。安全漏洞不要在公开 Issue 中披露。
+
+        Remove tokens, cookies, usernames, private paths, complete configuration, and prompt content. Do not disclose vulnerabilities in a public issue.
+
+  - type: input
+    id: keysmith-version
+    attributes:
+      label: claude-keysmith 版本 / Version
+      description: Paste the output of `python3 claude-instruct.py --version`, or the Desktop version.
+      placeholder: claude-keysmith v7.1 or Desktop 0.1.0-beta.1
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: 操作系统 / Operating system
+      placeholder: macOS 15.5 or Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code 版本（可选）/ Claude Code version (optional)
+      placeholder: claude 1.0.0
+
+  - type: dropdown
+    id: operation
+    attributes:
+      label: 操作模式 / Operation
+      options:
+        - install preview
+        - install (--yes)
+        - status
+        - uninstall preview
+        - uninstall (--yes)
+        - backups
+        - recover preview
+        - recover (--yes)
+        - restore
+        - doctor
+        - Desktop
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 实际发生的问题（含复现步骤和预期结果）/ What happened (include steps and what you expected)
+      description: Include the scope (user/project/local), whether `--runtime` was used, the smallest reproduction, expected behavior, and actual behavior.
+      placeholder: |
+        1. Run ...
+        2. Expected ...
+        3. Actually saw ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostic-output
+    attributes:
+      label: 脱敏后的 status / doctor / error 输出（可选，但强烈建议附上）/ Redacted diagnostic output (optional, strongly recommended)
+      description: Include relevant status, doctor, preview, or error output. Do not paste complete configuration or prompt content.
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 其他信息 / Additional context
+      description: Add only directly relevant information, such as whether a recovery journal or lock residue exists. Do not paste its complete contents.
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: 脱敏确认 / Redaction confirmation
+      options:
+        - label: I removed tokens, cookies, usernames, private paths, complete configuration, and prompt content. / 我已删除这些敏感信息。
+          required: true
