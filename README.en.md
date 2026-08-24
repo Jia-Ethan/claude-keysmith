@@ -107,7 +107,7 @@ python3 -m py_compile claude-instruct.py
 python3 -m pytest tests
 ```
 
-Safety boundary: [`docs/privacy-security.md`](docs/privacy-security.md). Community: [LINUX DO](https://linux.do).
+Safety boundary: [`docs/privacy-security.md`](docs/privacy-security.md). Official feedback: [GitHub Discussions](https://github.com/Jia-Ethan/claude-keysmith/discussions/13). Community: [LINUX DO](https://linux.do).
 
 - [codex-keysmith](https://github.com/Jia-Ethan/codex-keysmith) — global Codex instructions
 - [claude-keysmith](https://github.com/Jia-Ethan/claude-keysmith) — uninstallable Claude Code import blocks

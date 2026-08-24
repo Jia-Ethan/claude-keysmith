@@ -107,7 +107,7 @@ python3 -m py_compile claude-instruct.py
 python3 -m pytest tests
 ```
 
-安全边界见 [`docs/privacy-security.md`](docs/privacy-security.md)。社区：[LINUX DO](https://linux.do)。
+安全边界见 [`docs/privacy-security.md`](docs/privacy-security.md)。官方反馈：[GitHub Discussions](https://github.com/Jia-Ethan/claude-keysmith/discussions/13)；社区交流：[LINUX DO](https://linux.do)。
 
 - [codex-keysmith](https://github.com/Jia-Ethan/codex-keysmith) — Codex 全局指令
 - [claude-keysmith](https://github.com/Jia-Ethan/claude-keysmith) — Claude Code 可卸载 import block
