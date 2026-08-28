@@ -334,8 +334,17 @@ jobs:
           }
           $firstGui.Refresh()
           if ($firstGui.HasExited) { throw 'first GUI instance exited when the second instance started' }
-          Stop-Process -Id $firstGui.Id -Force
-          $firstGui.WaitForExit()
+          # WebView2 starts utility/GPU descendants that can keep files open
+          # after the top-level Tauri process exits. Kill only this GUI's tree
+          # before asking NSIS to remove the install directory.
+          & taskkill.exe /PID $firstGui.Id /T /F | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "failed to terminate installed GUI process tree for PID $($firstGui.Id): exit code $LASTEXITCODE" }
+          for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            $firstGui.Refresh()
+            if ($firstGui.HasExited) { break }
+            Start-Sleep -Milliseconds 200
+          }
+          if (-not $firstGui.HasExited) { throw "installed GUI process survived process-tree termination: PID $($firstGui.Id)" }
 
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "silent NSIS uninstall failed with exit code $($uninstall.ExitCode)" }

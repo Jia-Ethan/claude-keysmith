@@ -54,10 +54,10 @@ Rust 侧只负责"找到 CLI、按 argv 数组启动、限时限量收输出"：
 
 ## 视觉识别
 
-暖陶土（terracotta）+ 米色纸面 + 炭黑，与 codex-keysmith 的蓝紫色系明确区分：
+浅色 clay + 深色 tech blue，与 codex-keysmith 的视觉 token 对齐：
 
 - Light：accent `#d97757`（hover `#c6613f`），纸面底 `#faf9f5`。
-- Dark：暖炭底 `#161311`，accent `#e08a67`（hover `#eea27f`）。
+- Dark：深空黑底 `#0f0f0f`，accent `#6a9bcc`（hover `#8ab4dd`）。
 - muted 文本两主题对比度 ≥ 4.5:1（`--text-muted` 有注释标注）。
 - 玻璃卡片（`backdrop-filter` 模糊 + 24px 点阵纹理）+ 三团环境光晕缓慢漂移（`AmbientBg`，`prefers-reduced-motion` 下静止）。
 

@@ -9,7 +9,7 @@
 
 /* ============================================
    claude-keysmith GUI — 双模式 Design System
-   浅色 warm clay / 深色 warm charcoal + terracotta
+   token 沿用 ethanpier.com（浅色 clay / 深色 tech blue）
    ============================================ */
 
 :root {
@@ -48,28 +48,28 @@
 }
 
 .dark {
-  /* ---- Dark: warm charcoal + desaturated terracotta ---- */
-  --bg-primary: #161311;
-  --bg-secondary: #1c1815;
-  --bg-card: #221d19;
-  --bg-elevated: #2b2520;
+  /* ---- Dark: 深空 tech blue ---- */
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #161616;
+  --bg-card: #1a1a1a;
+  --bg-elevated: #252525;
 
-  --text-primary: #f2ede7;
-  --text-secondary: #cec5ba;  /* 4.5:1+ on bg-card */
-  --text-muted: #ada296;      /* 4.5:1+ on bg-primary & bg-card */
+  --text-primary: #f5f5f5;
+  --text-secondary: #c2c2c2;  /* 4.5:1+ on bg-card */
+  --text-muted: #9a9a9a;      /* 4.5:1+ on bg-primary */
 
-  --accent: #e08a67;
-  --accent-hover: #eea27f;
-  --accent-soft: rgba(224, 138, 103, 0.18);
-  --accent-soft-block: rgba(224, 138, 103, 0.12);
+  --accent: #6a9bcc;
+  --accent-hover: #8ab4dd;
+  --accent-soft: rgba(106, 155, 204, 0.18);
+  --accent-soft-block: rgba(106, 155, 204, 0.12);
 
-  --border: #3a332c;
-  --border-hover: #4e453c;
+  --border: #333333;
+  --border-hover: #4a4a4a;
 
-  --glow-color: rgba(224, 138, 103, 0.22);
+  --glow-color: rgba(106, 155, 204, 0.25);
   --shadow-card: 0 0 0 transparent;
   --shadow-card-hover: 0 0 24px var(--glow-color);
-  --gradient-brand: linear-gradient(135deg, #e08a67 0%, #c9744f 50%, #d4a27f 100%);
+  --gradient-brand: linear-gradient(135deg, #6a9bcc 0%, #8b7fcc 50%, #a78bfa 100%);
 
   --ok: #4ade80;
   --warn: #facc15;
@@ -225,7 +225,7 @@ body {
 }
 
 .dark .card-glass {
-  background-color: rgba(34, 29, 25, 0.5);
+  background-color: color-mix(in srgb, var(--bg-card) 50%, transparent);
   backdrop-filter: blur(16px) saturate(1.3);
   -webkit-backdrop-filter: blur(16px) saturate(1.3);
   box-shadow:
