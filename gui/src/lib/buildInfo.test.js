@@ -6,12 +6,12 @@ const VALID = "0123456789abcdef0123456789abcdef01234567";
 describe("normalizeBuildInfo", () => {
   it("keeps a valid injected build", () => {
     const info = normalizeBuildInfo({
-      guiVersion: "0.1.0-beta.1",
+      guiVersion: "0.1.0-beta.2",
       channel: "beta",
       sourceCommit: VALID,
       sidecarCommit: VALID,
     });
-    expect(info.guiVersion).toBe("0.1.0-beta.1");
+    expect(info.guiVersion).toBe("0.1.0-beta.2");
     expect(info.channel).toBe("beta");
     expect(info.sourceCommit).toBe(VALID);
   });
@@ -37,7 +37,7 @@ describe("normalizeBuildInfo", () => {
 
 describe("generated buildInfo", () => {
   it("exposes the beta GUI version from package.json", () => {
-    expect(buildInfo.guiVersion).toBe("0.1.0-beta.1");
+    expect(buildInfo.guiVersion).toBe("0.1.0-beta.2");
     expect(buildInfo.channel).toBe("beta");
   });
 });

@@ -43,7 +43,7 @@ Keysmith 系列为本地 AI 工具**安全部署、验证和撤销**自定义指
 ### 安装方式
 
 1. **稳妥：稳定 v7.1 源码 CLI。** 没有独立 CLI 安装包；按下方命令固定 clone `v7.1` tag，再运行 `claude-instruct.py`。不要 `curl | python`。
-2. **更易用：未签名 Desktop Beta。** 见 [desktop-v0.1.0-beta.1](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.1)：macOS Apple Silicon DMG 与 Windows x64 NSIS，内嵌 v7 预发布 CLI。无 Linux GUI、无自动更新、无签名。步骤见 [`docs/platform-support.md`](docs/platform-support.md)。
+2. **更易用：未签名 Desktop Beta。** 见 [desktop-v0.1.0-beta.2](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.2)：macOS Apple Silicon DMG 与 Windows x64 NSIS，内嵌 v7.1 CLI。无 Linux GUI、无自动更新、无签名。步骤见 [`docs/platform-support.md`](docs/platform-support.md)。
 
 ### 快速开始（稳定 v7.1）
 

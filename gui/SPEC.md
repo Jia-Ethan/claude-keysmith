@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # claude-keysmith GUI — 工程规范（SPEC）
 
-版本 `0.1.0-beta.1`，channel `beta`，未签名 Pre-release。本规范描述桌面客户端的架构与不可违背的约束；所有条目都能在代码中找到对应实现。发布状态与验收见 [`../docs/platform-support.md`](../docs/platform-support.md) 与 [`../docs/beta-acceptance.md`](../docs/beta-acceptance.md)。
+版本 `0.1.0-beta.2`，channel `beta`，未签名 Pre-release。本规范描述桌面客户端的架构与不可违背的约束；所有条目都能在代码中找到对应实现。发布状态与验收见 [`../docs/platform-support.md`](../docs/platform-support.md) 与 [`../docs/beta-acceptance.md`](../docs/beta-acceptance.md)。
 
 ## 1. 定位与边界
 

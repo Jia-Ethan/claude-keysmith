@@ -14,7 +14,7 @@ body:
     attributes:
       label: claude-keysmith 版本 / Version
       description: Paste the output of `python3 claude-instruct.py --version`, or the Desktop version.
-      placeholder: claude-keysmith v7.1 or Desktop 0.1.0-beta.1
+      placeholder: claude-keysmith v7.1 or Desktop 0.1.0-beta.2
     validations:
       required: true
 

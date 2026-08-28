@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # 平台支持矩阵
 
-桌面客户端 `claude-keysmith` GUI `0.1.0-beta.1`（channel `beta`，未签名 Pre-release）的目标产物与验收状态。配置存在 ≠ 验收通过；Windows 产物不能在 macOS worktree 本机构建或运行，原生构建与自动化安装链由 GitHub 托管 Windows x64 runner 验证，两平台用户可见行为由实体机验收补齐。
+桌面客户端 `claude-keysmith` GUI `0.1.0-beta.2`（channel `beta`，未签名 Pre-release）的目标产物与验收状态。配置存在 ≠ 验收通过；Windows 产物不能在 macOS worktree 本机构建或运行，原生构建与自动化安装链由 GitHub 托管 Windows x64 runner 验证，两平台用户可见行为由实体机验收补齐。
 
 ## 产物矩阵
 
@@ -13,7 +13,7 @@
 
 两种受支持平台都只用 `cd gui && npm run bundle` 生成发行产物。该入口先原生构建 sidecar，再加载打包 overlay 启用 bundle 和 `externalBin`；裸 Tauri 构建不是发行打包入口。
 
-## `desktop-v0.1.0-beta.1` 的发布门禁
+## `desktop-v0.1.0-beta.2` 的发布门禁
 
 实体机门禁已由维护者于 2026-08-15 确认全部通过；外发前继续强制核对候选可追溯性与发布授权：
 
@@ -26,7 +26,7 @@
 
 ## 本次未签名 beta 已接受的限制
 
-以下能力尚未提供，但在 Release 标题和产物名称明确标记 `unsigned beta`、提供 SHA-256，并在本文保留人工安装说明的前提下，**不单独阻塞 `desktop-v0.1.0-beta.1`**：
+以下能力尚未提供，但在 Release 标题和产物名称明确标记 `unsigned beta`、提供 SHA-256，并在本文保留人工安装说明的前提下，**不单独阻塞 `desktop-v0.1.0-beta.2`**：
 
 1. **代码签名 / notarization / Authenticode**：均未配置发行身份。macOS 候选使用完整 ad-hoc 签名（无 hardened runtime），`codesign --verify --deep --strict` 通过但 `spctl` 拒绝；Windows 安装器、GUI、sidecar 与 uninstaller 均为 `NotSigned`，两平台人工放行路径已完成实体机验收。
 2. **自动更新**：未实现，无 updater 配置；本 beta 仅支持用户手动下载、校验并安装后续版本。
@@ -39,7 +39,7 @@
 下载后先使用 Release 附带的 `SHA256SUMS` 校验安装包，再按平台安装：
 
 - **macOS Apple Silicon**：打开 `.dmg` 并将应用拖入 Applications。首次启动若被 Gatekeeper 拦截，在 Finder 中按住 Control 点击应用并选择“打开”；仍被阻止时，前往“系统设置 → 隐私与安全性”，确认目标应用后选择“仍要打开”。系统版本不同可能使用近似文案。
-- **Windows x64**：先用 `Get-FileHash .\claude-keysmith-desktop-0.1.0-beta.1-windows-x64-unsigned-setup.exe -Algorithm SHA256` 校验安装器，再运行该文件。若 SmartScreen 拦截，核对文件名与 SHA-256 后选择“更多信息 → 仍要运行”。无 WebView2 的机器会由安装器静默下载 bootstrapper，因此安装阶段需要可访问 Microsoft 下载服务的网络。
+- **Windows x64**：先用 `Get-FileHash .\claude-keysmith-desktop-0.1.0-beta.2-windows-x64-unsigned-setup.exe -Algorithm SHA256` 校验安装器，再运行该文件。若 SmartScreen 拦截，核对文件名与 SHA-256 后选择“更多信息 → 仍要运行”。无 WebView2 的机器会由安装器静默下载 bootstrapper，因此安装阶段需要可访问 Microsoft 下载服务的网络。
 
 ## CLI 平台支持（背景，不属于 GUI 产物）
 

@@ -43,7 +43,7 @@ The Keysmith series **deploys, verifies, and revokes** custom instructions for l
 ### Install options
 
 1. **Conservative: stable v7.1 source CLI.** There is no standalone CLI package. Use the command below to clone the `v7.1` tag, then run `claude-instruct.py`. Do not `curl | python`.
-2. **Easier: unsigned Desktop Beta.** See [desktop-v0.1.0-beta.1](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.1): macOS Apple Silicon DMG and Windows x64 NSIS, embedding the v7 prerelease CLI. No Linux GUI, no auto-update, no signing. Steps: [`docs/platform-support.md`](docs/platform-support.md).
+2. **Easier: unsigned Desktop Beta.** See [desktop-v0.1.0-beta.2](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.2): macOS Apple Silicon DMG and Windows x64 NSIS, embedding the v7.1 CLI. No Linux GUI, no auto-update, no signing. Steps: [`docs/platform-support.md`](docs/platform-support.md).
 
 ### Quick start (stable v7.1)
 

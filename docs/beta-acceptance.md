@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
-# Beta 验收清单（`0.1.0-beta.1`）
+# Beta 验收清单（`0.1.0-beta.2`）
 
-本文区分"已实际取得证据"、"实体机最终验收"与"本次未签名 beta 已接受的限制"。维护者于 2026-08-15 确认第二节全部项目通过；外发 `desktop-v0.1.0-beta.1` 前仍须从精确 main SHA 生成 `release_eligible:true` 候选并取得明确发布授权。代码签名、公证、Authenticode 与自动更新不属于这次明确标记为未签名 beta 的阻塞项，但必须通过 Release 标题、产物名称与平台文档如实披露。
+本文记录 Desktop beta.2 的发布门禁；2026-08-15 完成的 beta.1 实体机验收作为本版本基线，本次仍须复核精确 main SHA 的 beta.2 候选。外发 `desktop-v0.1.0-beta.2` 前必须取得 `release_eligible:true` 候选并完成资产核验。代码签名、公证、Authenticode 与自动更新不属于这次明确标记为未签名 beta 的阻塞项，但必须通过 Release 标题、产物名称与平台文档如实披露。
 
 验证环境（发布阻塞修复轮，分支 `fix/desktop-gui-p0-recovery`，base `f8b8234f`）：macOS 26.5.2 / Apple Silicon（arm64）实体机；Python 3.14.6 独立 venv（pytest 9.1.1）；Node 25.9.0 / npm 11.12.1（`npm ci`）；rustc 1.93.1。该轮 CLI 验证全部使用隔离 `HOME` / `CLAUDE_KEYSMITH_HOME` / `CLAUDE_KEYSMITH_SHELL_RC`，版本切换专项只运行临时 npm prefix 中的 `claude --version`；用户安装路径的最终升级验收另见第二节。
 
@@ -98,8 +98,8 @@
 ## 三、发布政策与边界声明
 
 - 本分支仅产出源码、文档与候选构建链；发行打包只用 `npm run bundle`。
-- 候选证据（sidecar / `BUILD_INFO.json` / 全量 `SHA256SUMS`）保留在本地候选目录与 CI artifact；Desktop Pre-release 仅上传 DMG、NSIS 与面向用户的 `SHA256SUMS`，CLI sidecar archive 不作为 `v7` 公共产物。
+- 候选证据（sidecar / `BUILD_INFO.json` / 全量 `SHA256SUMS`）保留在本地候选目录与 CI artifact；Desktop Pre-release 仅上传 DMG、NSIS 与面向用户的 `SHA256SUMS`，CLI sidecar archive 不作为公开资产。
 - **本次 beta 已接受限制（不单独阻塞 beta）**：无开发者代码签名、无 macOS notarization、无 Windows Authenticode、无自动更新、无 Linux GUI。Release 标题与产物名称必须明确标记 `unsigned beta`，附 SHA-256；人工安装说明保留在 [`platform-support.md`](platform-support.md)，tag 与 `BUILD_INFO.json` 共同绑定 source commit。不得暗示系统信任链或自动更新能力已经具备。
 - **真正的 beta 发布门禁**：实体机验收已完成；外发前必须取得两个目标平台的精确 main SHA 候选并复核元数据、安装器、sidecar、校验清单、版本、架构与签名状态，任何 tag 或 Release 仍需单独明确授权。
 - 若后续改为稳定版或默认面向普通用户分发，macOS Developer ID + notarization 与 Windows Authenticode 应升级为对应平台发布门禁；自动更新仍是独立产品能力，不在本 beta 承诺内。
-- 发布采用同批次双 Pre-release：`v7`（CLI）与 `desktop-v0.1.0-beta.1`（GUI beta）指向同一最终 main commit；完成精确候选复核并取得明确授权后方可创建 tag 与 GitHub Release。
+- `desktop-v0.1.0-beta.2` 为独立 Desktop Pre-release；完成精确候选复核并取得明确授权后方可创建 tag 与 GitHub Release。
