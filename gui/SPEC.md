@@ -83,13 +83,13 @@ localStorage 单键 `claude-keysmith-gui:settings`：`cliPath`（留空 = 自动
 
 ## 7. 视觉识别
 
-暖陶土 + 米色纸面 + 炭黑（**不是** codex-keysmith 的蓝紫色系）：
+浅色 clay + 深色 tech blue，与 codex-keysmith 的视觉 token 对齐：
 
 | Token | Light | Dark |
 |---|---|---|
-| `--accent` | `#d97757`（hover `#c6613f`） | `#e08a67`（hover `#eea27f`） |
-| `--bg-primary` | `#faf9f5`（米色纸面） | `#161311`（暖炭） |
-| brand 渐变 | `#d97757 → #c6613f → #d4a27f` | `#e08a67 → #c9744f → #d4a27f` |
+| `--accent` | `#d97757`（hover `#c6613f`） | `#6a9bcc`（hover `#8ab4dd`） |
+| `--bg-primary` | `#faf9f5`（米色纸面） | `#0f0f0f`（深空黑） |
+| brand 渐变 | `#d97757 → #c6613f → #d4a27f` | `#6a9bcc → #8b7fcc → #a78bfa` |
 
 - muted 文本两主题对比度 ≥ 4.5:1（`globals.css` 中有注释标注）。
 - 玻璃卡片：`backdrop-filter: blur(16px) saturate(...)` + 24px 点阵纹理 + 内高光。
