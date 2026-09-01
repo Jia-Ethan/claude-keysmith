@@ -1,0 +1,94 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.8", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install "pytest>=7.4,<9"
+      - run: python -m py_compile claude-instruct.py
+      - run: python -m pytest tests
+
+  windows-powershell-wrapper:
+    name: Windows wrapper / ${{ matrix.shell-name }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shell-name: Windows PowerShell 5.1
+            executable: powershell.exe
+          - shell-name: PowerShell 7
+            executable: pwsh.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Generate, load, and execute the managed wrapper
+        shell: pwsh
+        env:
+          TARGET_POWERSHELL: ${{ matrix.executable }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP ('keysmith-' + [Guid]::NewGuid().ToString('N'))
+          $homeDir = Join-Path $fixtureRoot 'home with spaces'
+          $profilePath = Join-Path $fixtureRoot "profile's dir\Microsoft.PowerShell_profile.ps1"
+          $upstream = Join-Path $fixtureRoot 'upstream claude.cmd'
+          $argLog = Join-Path $fixtureRoot 'args.log'
+          $verificationScript = Join-Path $fixtureRoot 'verify-wrapper.ps1'
+          New-Item -ItemType Directory -Force -Path $homeDir, (Split-Path -Parent $profilePath) | Out-Null
+
+          @'
+          @echo off
+          > "%KEYSMITH_ARG_LOG%" echo %*
+          exit /b 23
+          '@ | Set-Content -LiteralPath $upstream -Encoding Ascii
+
+          $env:CLAUDE_KEYSMITH_HOME = $homeDir
+          $env:HOME = $homeDir
+          $env:CLAUDE_KEYSMITH_SHELL = 'powershell'
+          $env:CLAUDE_KEYSMITH_SHELL_RC = $profilePath
+          $env:CLAUDE_KEYSMITH_CLAUDE_BIN = $upstream
+          $env:KEYSMITH_ARG_LOG = $argLog
+
+          python claude-instruct.py install --scope user --runtime --yes
+          if ($LASTEXITCODE -ne 0) { throw "install failed with $LASTEXITCODE" }
+
+          @'
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          . $env:CLAUDE_KEYSMITH_SHELL_RC
+          claude 'space value' '--literal=$dollar' 'semi;colon'
+          $upstreamExit = $LASTEXITCODE
+          if ($upstreamExit -ne 23) { throw "wrapper lost upstream exit code: $upstreamExit" }
+          if (-not (Test-Path -LiteralPath $env:KEYSMITH_ARG_LOG -PathType Leaf)) { throw 'upstream was not executed' }
+
+          $logged = Get-Content -LiteralPath $env:KEYSMITH_ARG_LOG -Raw
+          foreach ($expected in @('--system-prompt-file', '--append-system-prompt-file', 'space value', '--literal=$dollar', 'semi;colon')) {
+            if (-not $logged.Contains($expected)) { throw "missing forwarded argument: $expected`n$logged" }
+          }
+
+          # A non-zero child must return control to the caller without closing it.
+          Write-Host "wrapper returned control to $($PSVersionTable.PSVersion)"
+          exit 0
+          '@ | Set-Content -LiteralPath $verificationScript -Encoding UTF8
+
+          & $env:TARGET_POWERSHELL -NoLogo -NoProfile -ExecutionPolicy Bypass -File $verificationScript
+          if ($LASTEXITCODE -ne 0) { throw "$env:TARGET_POWERSHELL verification failed with $LASTEXITCODE" }
