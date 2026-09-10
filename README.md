@@ -67,9 +67,9 @@ Keysmith 给本机的 AI 编程工具装指令：先预览，再写入，能验�
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/pass-trend-zh-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/pass-trend-zh-light.svg" />
-    <img alt="同一批 4 题，完整交出产物从 1 题到 3 题" src="docs/assets/readme/pass-trend-zh-light.svg" width="92%" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-zh-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-zh-light.svg" />
+    <img alt="同一批 4 题，完整交出产物从 1 题到 3 题" src="docs/assets/readme/results-zh-light.svg" width="92%" />
   </picture>
 </p>
 

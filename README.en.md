@@ -67,9 +67,9 @@ One installer per tool. An unsigned desktop build is also available.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/pass-trend-en-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/pass-trend-en-light.svg" />
-    <img alt="On the same 4 prompts, complete artifacts rose from 1 to 3" src="docs/assets/readme/pass-trend-en-light.svg" width="92%" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-en-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-en-light.svg" />
+    <img alt="On the same 4 prompts, complete artifacts rose from 1 to 3" src="docs/assets/readme/results-en-light.svg" width="92%" />
   </picture>
 </p>
 
