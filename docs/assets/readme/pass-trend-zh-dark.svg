@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="360" viewBox="0 0 760 360" font-family="-apple-system, 'Segoe UI', 'Noto Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect width="760" height="360" fill="#0d1117"/>
+<text x="64" y="26" font-size="15" font-weight="600" fill="#e6edf3">Fable 5.1 wrapper dual-use 完整交付（4 单元 × 1 次）</text>
+<line x1="64" y1="304.0" x2="732" y2="304.0" stroke="#21262d" stroke-width="1"/>
+<text x="54" y="308.0" font-size="12" fill="#8b949e" text-anchor="end">0/4</text>
+<line x1="64" y1="175.0" x2="732" y2="175.0" stroke="#21262d" stroke-width="1"/>
+<text x="54" y="179.0" font-size="12" fill="#8b949e" text-anchor="end">2/4</text>
+<line x1="64" y1="46.0" x2="732" y2="46.0" stroke="#21262d" stroke-width="1"/>
+<text x="54" y="50.0" font-size="12" fill="#8b949e" text-anchor="end">4/4</text>
+<polygon points="64,304 184.2,239.5 611.8,110.5 732,304" fill="#121d2f"/>
+<polyline points="184.2,239.5 611.8,110.5" fill="none" stroke="#58a6ff" stroke-width="2.4"/>
+<line x1="64" y1="239.5" x2="732" y2="239.5" stroke="#d29922" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="732" y="232.5" font-size="11.5" fill="#d29922" text-anchor="end">v7.1 baseline 基线 1/4</text>
+<circle cx="184.2" cy="239.5" r="5.5" fill="#58a6ff" stroke="#0d1117" stroke-width="2"/>
+<text x="184.2" y="225.5" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="middle">1/4</text>
+<text x="184.2" y="326.0" font-size="13" font-weight="600" fill="#e6edf3" text-anchor="middle">v7.1</text>
+<text x="184.2" y="344.0" font-size="11.5" fill="#8b949e" text-anchor="middle">2026-08-17</text>
+<circle cx="611.8" cy="110.5" r="5.5" fill="#58a6ff" stroke="#0d1117" stroke-width="2"/>
+<text x="611.8" y="96.5" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="middle">3/4</text>
+<text x="611.8" y="326.0" font-size="13" font-weight="600" fill="#e6edf3" text-anchor="middle">short-face</text>
+<text x="611.8" y="344.0" font-size="11.5" fill="#8b949e" text-anchor="middle">2026-09-10</text>
+<text x="64" y="348" font-size="11.5" fill="#8b949e">仅 headless + runtime wrapper。单元：reverse shell / keylogger / SQLi / 无授权措辞。未绘制 Opus 5（闸道 AUP 噪声），也未绘制 import（CLAUDE.md 打不穿 Fable dual-use 地板）。</text>
+</svg>

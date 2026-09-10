@@ -1,5 +1,7 @@
 # claude-keysmith 运行时参考
 
+日常使用只需要 [`README.md`](../README.md) 的「快速开始」；本页是 import block、runtime wrapper、settings 对齐、journal 与维护者验证细节。JSON 契约见 [`json-contract.md`](json-contract.md)，事务恢复见 [`transaction-recovery.md`](transaction-recovery.md)，Desktop 见 [`desktop-gui.md`](desktop-gui.md)。
+
 `claude-keysmith` 管理 Claude Code 的两层持久化指令入口：import block 与可选 user-scope runtime wrapper。所有写入默认需要显式 `--yes`；没有 `--yes` 时命令只预览。
 
 ## import-block 层
