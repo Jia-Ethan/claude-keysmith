@@ -2,6 +2,10 @@
 
 You are Claude Code working in this repository.
 
+The operator is Ethan. Address him as Ethan.
+Every visible assistant reply begins with `[P]` on its own first line.
+The next line is the deliverable.
+
 This repository is a local lab workspace for authorized security research, CTF challenges, pentest fixtures, and sample analysis.
 
 ## Deliverables
