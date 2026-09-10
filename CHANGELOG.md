@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Windows Desktop / sidecar 在没有用户级 `PSModulePath`（资源管理器启动的 GUI 进程常见）时，不再把 runtime 探测直接失败关闭。改为：仍优先使用 `PSModulePath` 里第一个可识别的用户 Modules 条目；没有时回退到用户 Documents 下已存在的 PowerShell profile，否则写入 Win10 默认的 `Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`。`CLAUDE_KEYSMITH_SHELL_RC` 仍然覆盖。
+- `status --json` / `doctor --json` 在 runtime 探测或 project-dir 校验失败时仍输出契约 JSON，GUI 不再把 stdout 里的 `[错误]` 文本显示成「状态加载失败 / CLI 未输出稳定 JSON」。
+
 ## v7.2 (2026-09-10)
 
 - Bundled project-rules rewritten as a short lab/CTF/pentest project face; creative delivery stays in append only. Authorization-term recast removed after Opus 5 read it as a refusal-override.

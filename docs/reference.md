@@ -35,7 +35,13 @@
 
 在 macOS / Linux 上，wrapper 是 `claude()` shell 函数；在 Windows PowerShell 上，wrapper 是 profile 中的 `function global:claude`。自 v6 起正式支持 Windows PowerShell 5.1 与 PowerShell 7；CMD 和 Git Bash 不属于 managed wrapper 支持范围。
 
-Windows profile 解析从实际用户级 `PSModulePath` 的首个可识别条目派生：条目中的 `WindowsPowerShell/Modules` 对应 Windows PowerShell 5.1 profile，`PowerShell/Modules` 对应 PowerShell 7 profile，并保留该条目前缀，因此支持重定向后的 Documents 目录。全新环境中，即使 `PSModulePath` 已声明的用户 `Modules` 目录尚未创建，也会按路径结构识别；没有可识别条目时，安装会停止并要求通过 `CLAUDE_KEYSMITH_SHELL_RC` 指定目标 profile，不会回退猜测。
+Windows profile 解析顺序：
+
+1. `$CLAUDE_KEYSMITH_SHELL_RC` 显式覆盖。
+2. 实际用户级 `PSModulePath` 的首个可识别条目：`WindowsPowerShell/Modules` → Windows PowerShell 5.1，`PowerShell/Modules` → PowerShell 7，并保留该条目前缀（支持重定向后的 Documents）。全新环境中，即使该 `Modules` 目录尚未创建，也会按路径结构识别。
+3. 若当前进程没有用户级 `PSModulePath`（Desktop sidecar / 资源管理器启动的 GUI 常见：变量为空，或只剩 Program Files / System32），回退到用户 Documents 目录：优先已存在的 `Microsoft.PowerShell_profile.ps1`（先 WindowsPowerShell 5.1，再 PowerShell 7），否则目标为 Win10 默认的 `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`。Documents 本身按 Known Folder / 用户壳文件夹注册表 / `USERPROFILE\Documents` / `USERPROFILE\文档` / `$HOME\Documents` 解析，因此 OneDrive 重定向和中文「文档」目录可用。
+
+仍可用 `$CLAUDE_KEYSMITH_SHELL_RC` 指定 PS7 或其他非默认 profile。
 
 可选环境变量覆盖：
 

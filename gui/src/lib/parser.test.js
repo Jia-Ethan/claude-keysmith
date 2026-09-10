@@ -341,6 +341,16 @@ describe("parseStatusReport / deriveHealth", () => {
     expect(model.runtimeReadiness).toBeNull();
     expect(model.health).toBe("healthy");
   });
+
+  it("surfaces status ok:false as the real error instead of missing JSON", () => {
+    expect(() => parseStatusReport(output({
+      schema: SCHEMA,
+      operation: "status",
+      ok: false,
+      error: "project directory 不存在或不是目录: /missing",
+      blockers: ["project directory 不存在或不是目录: /missing"],
+    }, { exitCode: 1 }))).toThrow(/project directory/);
+  });
 });
 
 describe("parseDoctorReport", () => {

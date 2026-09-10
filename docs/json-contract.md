@@ -12,7 +12,8 @@
   - `ok: false` ⇒ 调用方必须视为失败并停止后续动作，即使 exit code 为 0 的场景也不存在——非零 exit 与 `ok:false` 同时成立。
   - 未捕获异常同样以 `ok: false` + `error` 输出 JSON（不丢 Python traceback 给调用方）。
   - **参数校验失败**（如 `--max-tokens 0`）在传入 `--json` 时也输出契约 JSON 到 stdout（`ok: false`、`exit_status: 2`，`error` / `blockers` 为 argparse 的具体原因），argparse 的 usage 文本仍保留在 stderr 供人工阅读；进程退出码为 2。
-  - GUI 侧的 proceed 判定见 `gui/src/lib/parser.js` 的 `gateReport`：`exit_code !== 0`、`blockers` 非空、`ok === false` 任一成立即 blocked。
+  - **`status --json` / `doctor --json` 探测失败**同样输出 JSON，不向 stdout 打印 `[错误]` 文本。`status` 在 project-dir 不存在等校验失败时给出 `ok: false` 的 status 文档；user-scope `--runtime` 的 profile/runtime 探测失败则仍返回 status 骨架，并把原因放进 `runtime.error` / `runtime_readiness.runtime_ready: false`。`doctor` 保持固定 9 键，把原因放进 `repair_actions`。
+  - GUI 侧的 proceed 判定见 `gui/src/lib/parser.js` 的 `gateReport`：`exit_code !== 0`、`blockers` 非空、`ok === false` 任一成立即 blocked。`parseStatusReport` 对 `ok: false` 抛出带 `error` 原文的 `ContractError`。
 - **凭证脱敏**：契约与文本输出都不包含 API token、cookie、Base URL 或非目标的 `settings.json` 字段值。`settings.json` 仅以路径（`settings_file`）和布尔对齐状态（`settings_system_prompt_aligned`）出现；`doctor` 更是固定 9 个键，永不扩展出凭证字段。
 - **sha256 / size_bytes**：`backups[]`、`source`/`sources`、`status.source_identity` 中的指纹均为 SHA-256 十六进制 + 字节数，供调用方核验内容，不展示内容本身。
 
@@ -221,7 +222,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
 | `recovery_state` | `journals`、`journal_count`、`atomic_temp_files`、`atomic_temp_count`、`conflicts`、`lock_present`、`lock_live`、`recovery_required`、`must_recover_before_writes` |
 | `runtime` | 完整 runtime 状态（仅 user scope `--runtime`；非 user scope 为 `{supported: false, reason: ...}`） |
 
-`recovery_state.journals[]` 条目：`{journal_path, journal_id, operation, state, started_at, pid}`。`runtime_ready` 只有在 prompt 文件完整、settings 对齐、wrapper 为当前 v7.2 模板、上游入口存在且无旧 launcher 冲突时才为 `true`。
+`recovery_state.journals[]` 条目：`{journal_path, journal_id, operation, state, started_at, pid}`。`runtime_ready` 只有在 prompt 文件完整、settings 对齐、wrapper 为当前 v7.2 模板、上游入口存在且无旧 launcher 冲突时才为 `true`。user-scope `--runtime` 的 profile 探测失败时 `runtime.error` 为原因字符串，`runtime_readiness.runtime_ready` 为 `false`，其余 presence / recovery 块仍可用。project-dir 不存在时整个 status 文档为 `ok: false`。
 
 示例（未安装，user scope + `--runtime`，截选）：
 
