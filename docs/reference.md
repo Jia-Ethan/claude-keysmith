@@ -39,7 +39,7 @@ Windows profile 解析顺序：
 
 1. `$CLAUDE_KEYSMITH_SHELL_RC` 显式覆盖。
 2. 实际用户级 `PSModulePath` 的首个可识别条目：`WindowsPowerShell/Modules` → Windows PowerShell 5.1，`PowerShell/Modules` → PowerShell 7，并保留该条目前缀（支持重定向后的 Documents）。全新环境中，即使该 `Modules` 目录尚未创建，也会按路径结构识别。
-3. 若当前进程没有用户级 `PSModulePath`（Desktop sidecar / 资源管理器启动的 GUI 常见：变量为空，或只剩 Program Files / System32），回退到用户 Documents 目录：优先已存在的 `Microsoft.PowerShell_profile.ps1`（先 WindowsPowerShell 5.1，再 PowerShell 7），否则目标为 Win10 默认的 `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`。Documents 本身按 Known Folder / 用户壳文件夹注册表 / `USERPROFILE\Documents` / `USERPROFILE\文档` / `$HOME\Documents` 解析，因此 OneDrive 重定向和中文「文档」目录可用。
+3. 若当前进程没有用户级 `PSModulePath`（Desktop sidecar / 资源管理器启动的 GUI 常见：变量为空，或只剩 Program Files / System32），回退到用户 Documents 目录：优先已存在的 `Microsoft.PowerShell_profile.ps1`（先 WindowsPowerShell 5.1，再 PowerShell 7），否则目标为 Win10 默认的 `Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`。当 *home* 就是当前 Windows 用户配置目录（`USERPROFILE` / `Path.home()`）时，Documents 按 Known Folder / 用户壳文件夹注册表解析，因此 OneDrive 重定向可用；`CLAUDE_KEYSMITH_HOME` 或测试夹具只使用该 home 下的 `Documents` / `文档`，不会写到机器上另一个用户的 profile。
 
 仍可用 `$CLAUDE_KEYSMITH_SHELL_RC` 指定 PS7 或其他非默认 profile。
 

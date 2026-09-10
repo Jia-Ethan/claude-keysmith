@@ -385,8 +385,47 @@ def _windows_documents_from_registry() -> Optional[Path]:
     return Path(expanded) if expanded else None
 
 
+def _path_identity(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(Path(path).expanduser())))
+
+
+def _home_is_windows_user_profile(home: Path) -> bool:
+    """True when *home* is the real Windows user profile, not a test/override HOME.
+
+    Known Folder / registry Documents must not leak into an isolated
+    CLAUDE_KEYSMITH_HOME or $HOME fixture. Path.home() on Windows reads
+    USERPROFILE and ignores Unix $HOME, which is the GUI sidecar case.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        home_key = _path_identity(home)
+    except (OSError, ValueError, TypeError):
+        return False
+    candidates = []
+    userprofile = _env_case_insensitive("USERPROFILE")
+    if userprofile:
+        candidates.append(userprofile)
+    try:
+        candidates.append(str(Path.home()))
+    except (OSError, RuntimeError):
+        pass
+    for candidate in candidates:
+        try:
+            if _path_identity(Path(candidate)) == home_key:
+                return True
+        except (OSError, ValueError, TypeError):
+            continue
+    return False
+
+
 def iter_user_documents_dirs(home: Path) -> List[Path]:
-    """Candidate Documents directories, known-folder first, then HOME fallbacks."""
+    """Candidate Documents directories for the given keysmith home.
+
+    Machine Known Folder / shell-folder registry / USERPROFILE\\Documents are
+    only consulted when *home* is the real Windows user profile. Isolated test
+    homes and CLAUDE_KEYSMITH_HOME overrides stay inside that home.
+    """
     ordered: List[Path] = []
     seen = set()
 
@@ -394,7 +433,7 @@ def iter_user_documents_dirs(home: Path) -> List[Path]:
         if path is None:
             return
         try:
-            key = os.path.normcase(os.path.abspath(str(Path(path).expanduser())))
+            key = _path_identity(path)
         except (OSError, ValueError, TypeError):
             return
         if key in seen:
@@ -402,12 +441,13 @@ def iter_user_documents_dirs(home: Path) -> List[Path]:
         seen.add(key)
         ordered.append(Path(key))
 
-    add(_windows_documents_from_known_folder())
-    add(_windows_documents_from_registry())
-    userprofile = _env_case_insensitive("USERPROFILE")
-    if userprofile:
-        for name in _DOCUMENTS_DIR_NAMES:
-            add(Path(userprofile) / name)
+    if _home_is_windows_user_profile(home):
+        add(_windows_documents_from_known_folder())
+        add(_windows_documents_from_registry())
+        userprofile = _env_case_insensitive("USERPROFILE")
+        if userprofile:
+            for name in _DOCUMENTS_DIR_NAMES:
+                add(Path(userprofile) / name)
     for name in _DOCUMENTS_DIR_NAMES:
         add(home / name)
     if not ordered:

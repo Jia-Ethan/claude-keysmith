@@ -1015,6 +1015,39 @@ def test_powershell_profile_fallback_uses_chinese_documents_folder(tmp_path, mon
     assert claude_instruct.powershell_profile_path(home) == profile
 
 
+def test_powershell_profile_isolated_home_ignores_machine_documents(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    machine = tmp_path / "machine-documents"
+    machine_profile = machine / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    machine_profile.parent.mkdir(parents=True)
+    machine_profile.write_text("# machine\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+    monkeypatch.setattr(claude_instruct, "_home_is_windows_user_profile", lambda _home: False)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_known_folder", lambda: machine)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_registry", lambda: machine)
+
+    assert claude_instruct.powershell_profile_path(home) == (
+        home / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    )
+    assert claude_instruct.powershell_profile_path(home) != machine_profile
+
+
+def test_powershell_profile_real_user_home_uses_known_documents(tmp_path, monkeypatch):
+    home = tmp_path / "user"
+    redirected = tmp_path / "OneDrive" / "Documents"
+    profile = redirected / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("# existing\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+    monkeypatch.setattr(claude_instruct, "_home_is_windows_user_profile", lambda _home: True)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_known_folder", lambda: redirected)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_registry", lambda: None)
+
+    assert claude_instruct.powershell_profile_path(home) == profile
+
+
 def test_runtime_install_migrates_recognized_local_bin_launchers(tmp_path):
     home = tmp_path / "home"
     profile = home / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
