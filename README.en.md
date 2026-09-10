@@ -22,7 +22,7 @@
 
 <p align="center">
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/Jia-Ethan/claude-keysmith?style=flat-square&color=%232f81f7">
-  <a href="https://github.com/Jia-Ethan/claude-keysmith/releases/latest"><img alt="Stable Release" src="https://img.shields.io/badge/Stable-v7.1-2f81f7?style=flat-square"></a>
+  <a href="https://github.com/Jia-Ethan/claude-keysmith/releases/latest"><img alt="Stable Release" src="https://img.shields.io/badge/Stable-v7.2-2f81f7?style=flat-square"></a>
   <img alt="Python 3.8+" src="https://img.shields.io/badge/Python-3.8+-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-6DB33F?style=flat-square">
 </p>
@@ -58,18 +58,18 @@ Methodology and per-cell data live in [`CHANGELOG.md`](CHANGELOG.md) and `breakt
 
 ### Install options 📦
 
-1. **Conservative: source CLI.** There is no standalone CLI package. The latest stable tag on [Releases](https://github.com/Jia-Ethan/claude-keysmith/releases) is `v7.1` (no ZIP assets). The bundled prompt in this tree is the short lab face and has not been retagged; install current source and verify the SHA-256. Do not `curl | python`, and do not treat the v4.0 manual inside the old tag as the current prompt.
+1. **Conservative: source CLI.** There is no standalone CLI package. Pin the `v7.2` tag from the [latest stable Release](https://github.com/Jia-Ethan/claude-keysmith/releases/latest) (no ZIP assets). Do not `curl | python`, and do not treat the v4.0 manual inside the old `v7.1` tag as the current prompt.
 2. **Easier: unsigned Desktop Beta.** The current public build is [desktop-v0.1.0-beta.2](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.2): macOS Apple Silicon DMG and Windows x64 NSIS, embedding the v7.1 CLI. It is a public GitHub Pre-release (not the stable Latest); there is no developer signing, auto-update, or Linux GUI. Steps: [`docs/platform-support.md`](docs/platform-support.md).
 3. **Let an agent install it.** Copy the instruction template from [`docs/agent-install.md`](docs/agent-install.md) and have Codex / Claude Code / any execution agent do the verification and deployment for you.
 
 ### Quick start 🚀
 
-**Current source (recommended; includes the short lab face):**
+**Pinned source tag:**
 
 ```bash
-git clone --depth 1 https://github.com/Jia-Ethan/claude-keysmith.git
+git clone --branch v7.2 --depth 1 https://github.com/Jia-Ethan/claude-keysmith.git
 cd claude-keysmith
-python3 claude-instruct.py --version   # claude-keysmith v7.1
+python3 claude-instruct.py --version   # claude-keysmith v7.2
 shasum -a 256 examples/claude-project-rules.md
 # expect bd6b2f877ae26fcf2ed7349948028a3031d4d78bf8a72a54416945d5fb307ad5
 python3 claude-instruct.py install --scope project --project-dir /path/to/repo
@@ -112,7 +112,7 @@ python3 claude-instruct.py recover --scope user --yes
 
 - CLI: Python 3.8+; wrappers support macOS / Linux zsh and Windows PowerShell 5.1 / 7. CMD and Git Bash are out of scope.
 - Desktop: macOS Apple Silicon and Windows x64 only; unsigned; Gatekeeper or SmartScreen may warn.
-- Versions and assets live on [Releases](https://github.com/Jia-Ethan/claude-keysmith/releases). `v7.1` provides `--json`, journal / recover, and the Windows wrapper. The CLI version string is still `v7.1`; the bundled prompt is whatever SHA-256 the working tree reports.
+- Versions and assets live on [Releases](https://github.com/Jia-Ethan/claude-keysmith/releases). `v7.2` provides `--json`, journal / recover, and the Windows wrapper; the bundled prompt is whatever SHA-256 the working tree reports.
 
 ### Project layout 🗂️
 

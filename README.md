@@ -22,7 +22,7 @@
 
 <p align="center">
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/Jia-Ethan/claude-keysmith?style=flat-square&color=%232f81f7">
-  <a href="https://github.com/Jia-Ethan/claude-keysmith/releases/latest"><img alt="Stable Release" src="https://img.shields.io/badge/Stable-v7.1-2f81f7?style=flat-square"></a>
+  <a href="https://github.com/Jia-Ethan/claude-keysmith/releases/latest"><img alt="Stable Release" src="https://img.shields.io/badge/Stable-v7.2-2f81f7?style=flat-square"></a>
   <img alt="Python 3.8+" src="https://img.shields.io/badge/Python-3.8+-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-6DB33F?style=flat-square">
 </p>
@@ -58,18 +58,18 @@ Fable 5.1、headless + runtime wrapper、4 个 dual-use 单元 × 1 次上的完
 
 ### 安装方式 📦
 
-1. **稳妥：源码 CLI。** 没有独立 CLI 安装包。[Releases](https://github.com/Jia-Ethan/claude-keysmith/releases) 上最新稳定 tag 是 `v7.1`（无 ZIP 资产）。本仓库当前内置提示词已换成短规则脸，尚未打新 tag；安装当前源码并校验 SHA-256，不要 `curl | python`，也不要用旧 tag 里的 v4.0 说明书冒充当前提示词。
+1. **稳妥：源码 CLI。** 没有独立 CLI 安装包。钉 [最新稳定 Release](https://github.com/Jia-Ethan/claude-keysmith/releases/latest) 的 `v7.2` tag（无 ZIP 资产）。不要 `curl | python`，也不要用旧 tag `v7.1` 里的 v4.0 说明书冒充当前提示词。
 2. **更易用：未签名 Desktop Beta。** 当前公开版是 [desktop-v0.1.0-beta.2](https://github.com/Jia-Ethan/claude-keysmith/releases/tag/desktop-v0.1.0-beta.2)：macOS Apple Silicon DMG 与 Windows x64 NSIS，内嵌 v7.1 CLI。它是公开的 GitHub Pre-release（不是稳定 Latest）；无开发者签名、无自动更新、无 Linux GUI。步骤见 [`docs/platform-support.md`](docs/platform-support.md)。
 3. **交给智能体装。** 复制 [`docs/agent-install.md`](docs/agent-install.md) 里的指令模板，让 Codex / Claude Code / 任何执行型智能体替你完成校验与部署。
 
 ### 快速开始 🚀
 
-**当前源码（推荐，含短规则脸）：**
+**固定 tag 源码：**
 
 ```bash
-git clone --depth 1 https://github.com/Jia-Ethan/claude-keysmith.git
+git clone --branch v7.2 --depth 1 https://github.com/Jia-Ethan/claude-keysmith.git
 cd claude-keysmith
-python3 claude-instruct.py --version   # claude-keysmith v7.1
+python3 claude-instruct.py --version   # claude-keysmith v7.2
 shasum -a 256 examples/claude-project-rules.md
 # 期望 bd6b2f877ae26fcf2ed7349948028a3031d4d78bf8a72a54416945d5fb307ad5
 python3 claude-instruct.py install --scope project --project-dir /path/to/repo
@@ -112,7 +112,7 @@ python3 claude-instruct.py recover --scope user --yes
 
 - CLI：Python 3.8+；wrapper 支持 macOS / Linux zsh 与 Windows PowerShell 5.1 / 7。CMD、Git Bash 不在正式范围。
 - Desktop：仅 macOS Apple Silicon 与 Windows x64，未签名，可能触发 Gatekeeper / SmartScreen。
-- 版本与产物以 [Releases](https://github.com/Jia-Ethan/claude-keysmith/releases) 为准。`v7.1` 提供 `--json`、journal / recover 与 Windows wrapper。CLI 版本字符串仍是 `v7.1`；当前内置提示词以工作树 SHA-256 为准。
+- 版本与产物以 [Releases](https://github.com/Jia-Ethan/claude-keysmith/releases) 为准。`v7.2` 提供 `--json`、journal / recover 与 Windows wrapper；内置提示词以工作树 SHA-256 为准。
 
 ### 项目结构 🗂️
 
