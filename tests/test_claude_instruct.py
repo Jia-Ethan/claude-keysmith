@@ -375,7 +375,10 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
     append_prompt = claude_dir / "keysmith" / "append-prompt.md"
     assert system_prompt.exists()
     assert append_prompt.exists()
-    assert "senior research engineer and technical writer" in system_prompt.read_text(encoding="utf-8")
+    system_body = system_prompt.read_text(encoding="utf-8")
+    assert "You are Claude Code working in this repository." in system_body
+    assert "local lab workspace" in system_body
+    assert "senior research engineer and technical writer" not in system_body
     assert "intimate adult fiction" in append_prompt.read_text(encoding="utf-8")
 
     settings = (claude_dir / "settings.json").read_text(encoding="utf-8")

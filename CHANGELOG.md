@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Bundled project-rules rewritten as a short lab/CTF/pentest project face; creative delivery stays in append only. Authorization-term recast removed after Opus 5 read it as a refusal-override. Not released.
+
 ## v7.1 (2026-08-17)
 
 - 重新整理新人安装路径，明确稳定版、预发布版与未签名 Desktop Beta 的区别。
