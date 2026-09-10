@@ -650,6 +650,93 @@ def test_windows_style_runtime_install_uses_powershell_profile(tmp_path):
     assert "# existing powershell profile" in profile_after
 
 
+def test_gui_like_runtime_preview_does_not_require_psmodulepath(tmp_path):
+    home = tmp_path / "home"
+    extra_env = {
+        "CLAUDE_KEYSMITH_SHELL": "powershell",
+        "PATH": str(home / "empty-path"),
+        "PSModulePath": "",
+    }
+    result = run_cli(
+        ["install", "--scope", "user", "--runtime", "--json"],
+        home=home,
+        extra_env=extra_env,
+        check=False,
+    )
+    payload = json.loads(result.stdout)
+    blockers = " ".join(payload.get("blockers") or [])
+    error = payload.get("error") or ""
+    assert "PSModulePath" not in blockers
+    assert "PSModulePath" not in error
+    assert "CLAUDE_KEYSMITH_SHELL_RC" not in blockers
+    expected_profile = home / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    assert Path(payload["target"]["shell_rc"]) == expected_profile
+
+
+def test_status_json_missing_project_dir_is_fail_closed_document(tmp_path):
+    home = tmp_path / "home"
+    missing = tmp_path / "no-such-project"
+    result = run_cli(
+        ["status", "--scope", "project", "--project-dir", str(missing), "--json"],
+        home=home,
+        check=False,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["schema"] == "claude-keysmith/v1"
+    assert payload["ok"] is False
+    assert payload["operation"] == "status"
+    assert "project directory" in payload["error"]
+
+
+def test_status_runtime_probe_failure_still_returns_json(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_KEYSMITH_SHELL", "powershell")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+
+    def boom():
+        raise ValueError("runtime probe exploded")
+
+    monkeypatch.setattr(claude_instruct, "user_runtime_paths", boom)
+    status = claude_instruct.collect_status("user", None, "claude-project-rules", runtime=True)
+    assert status["schema"] == "claude-keysmith/v1"
+    assert status["runtime"]["runtime_ready"] is False
+    assert "runtime probe exploded" in status["runtime"]["error"]
+    assert status["runtime_readiness"]["runtime_ready"] is False
+    assert status["presence"]["memory_file"] is False
+
+
+def test_doctor_json_probe_failure_keeps_fixed_key_set(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_KEYSMITH_SHELL", "powershell")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+
+    def boom():
+        raise ValueError("doctor probe exploded")
+
+    monkeypatch.setattr(claude_instruct, "user_runtime_paths", boom)
+    args = type("Args", (), {"json": True})()
+    captured = []
+    monkeypatch.setattr("builtins.print", lambda text: captured.append(text))
+    exit_status = claude_instruct.command_runtime_doctor(args)
+    assert exit_status == 1
+    payload = json.loads(captured[0])
+    assert set(payload) == {
+        "installation_type",
+        "upstream_candidates",
+        "upstream_path",
+        "system_prompt_file",
+        "append_prompt_file",
+        "settings_file",
+        "shell_kind",
+        "shell_rc",
+        "repair_actions",
+    }
+    assert "doctor probe exploded" in payload["repair_actions"][0]
+
+
 def test_version_reports_current_version(tmp_path):
     result = run_cli(["--version"], home=tmp_path / "home")
     assert result.stdout.strip() == f"claude-keysmith {claude_instruct.VERSION}"
@@ -850,15 +937,16 @@ def test_powershell_profile_accepts_user_module_path_before_directory_exists(
     )
 
 
-def test_powershell_profile_rejects_ambiguous_module_path_without_override(tmp_path, monkeypatch):
+def test_powershell_profile_falls_back_when_module_path_is_ambiguous(tmp_path, monkeypatch):
     home = tmp_path / "home"
     ambiguous = tmp_path / "Modules"
     ambiguous.mkdir()
     monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
     monkeypatch.setenv("PSModulePath", str(ambiguous))
 
-    with pytest.raises(ValueError, match="CLAUDE_KEYSMITH_SHELL_RC"):
-        claude_instruct.powershell_profile_path(home)
+    assert claude_instruct.powershell_profile_path(home) == (
+        home / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    )
 
 
 @pytest.mark.parametrize("profile_dir", ["PowerShell", "WindowsPowerShell"])
@@ -881,15 +969,83 @@ def test_powershell_profile_uses_redirected_user_documents_and_ignores_program_f
     )
 
 
-def test_powershell_profile_rejects_program_files_only_module_path(tmp_path, monkeypatch):
+def test_powershell_profile_falls_back_when_module_path_is_program_files_only(
+    tmp_path, monkeypatch
+):
     home = tmp_path / "home"
     program_files_modules = tmp_path / "Program Files" / "PowerShell" / "Modules"
     program_files_modules.mkdir(parents=True)
     monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
     monkeypatch.setenv("PSModulePath", str(program_files_modules))
 
-    with pytest.raises(ValueError, match="CLAUDE_KEYSMITH_SHELL_RC"):
-        claude_instruct.powershell_profile_path(home)
+    assert claude_instruct.powershell_profile_path(home) == (
+        home / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    )
+
+
+def test_powershell_profile_falls_back_when_psmodulepath_missing(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+
+    assert claude_instruct.powershell_profile_path(home) == (
+        home / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    )
+
+
+def test_powershell_profile_fallback_prefers_existing_ps7_profile(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    ps7 = home / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    ps7.parent.mkdir(parents=True)
+    ps7.write_text("# existing\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+
+    assert claude_instruct.powershell_profile_path(home) == ps7
+
+
+def test_powershell_profile_fallback_uses_chinese_documents_folder(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    profile = home / "文档" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("# existing\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+
+    assert claude_instruct.powershell_profile_path(home) == profile
+
+
+def test_powershell_profile_isolated_home_ignores_machine_documents(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    machine = tmp_path / "machine-documents"
+    machine_profile = machine / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    machine_profile.parent.mkdir(parents=True)
+    machine_profile.write_text("# machine\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+    monkeypatch.setattr(claude_instruct, "_home_is_windows_user_profile", lambda _home: False)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_known_folder", lambda: machine)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_registry", lambda: machine)
+
+    assert claude_instruct.powershell_profile_path(home) == (
+        home / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    )
+    assert claude_instruct.powershell_profile_path(home) != machine_profile
+
+
+def test_powershell_profile_real_user_home_uses_known_documents(tmp_path, monkeypatch):
+    home = tmp_path / "user"
+    redirected = tmp_path / "OneDrive" / "Documents"
+    profile = redirected / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("# existing\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_KEYSMITH_SHELL_RC", raising=False)
+    monkeypatch.delenv("PSModulePath", raising=False)
+    monkeypatch.setattr(claude_instruct, "_home_is_windows_user_profile", lambda _home: True)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_known_folder", lambda: redirected)
+    monkeypatch.setattr(claude_instruct, "_windows_documents_from_registry", lambda: None)
+
+    assert claude_instruct.powershell_profile_path(home) == profile
 
 
 def test_runtime_install_migrates_recognized_local_bin_launchers(tmp_path):

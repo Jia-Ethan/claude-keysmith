@@ -230,6 +230,12 @@ export function mapRecoveryState(recovery) {
  */
 export function parseStatusReport(output) {
   const doc = parseContract(output);
+  if (doc.ok === false) {
+    throw new ContractError(
+      typeof doc.error === "string" && doc.error ? doc.error : "status failed",
+      output,
+    );
+  }
   const model = {
     scope: typeof doc.scope === "string" ? doc.scope : "user",
     root: typeof doc.root === "string" ? doc.root : null,

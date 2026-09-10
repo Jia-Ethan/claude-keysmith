@@ -304,49 +304,6 @@ def runtime_shell_kind() -> str:
     return "powershell" if os.name == "nt" else "zsh"
 
 
-def powershell_profile_path(home: Path) -> Path:
-    """Locate PowerShell profile for PS5 (WindowsPowerShell) or PS7 (PowerShell).
-
-    Override with $CLAUDE_KEYSMITH_SHELL_RC.
-    """
-    configured = os.environ.get("CLAUDE_KEYSMITH_SHELL_RC")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    module_path = os.environ.get("PSModulePath", "")
-    if ";" in module_path:
-        entries = module_path.split(";")
-    elif os.pathsep == ":" and not re.match(r"^[A-Za-z]:[\\/]", module_path):
-        entries = module_path.split(os.pathsep)
-    else:
-        entries = [module_path]
-    for entry in (item.strip().strip('"') for item in entries):
-        if not entry:
-            continue
-        module_dir = Path(entry).expanduser()
-        # Fresh Windows installs can advertise the user module path before the
-        # directory has been created, so classify the path by structure.
-        if module_dir.name.lower() != "modules":
-            continue
-        shell_dir = module_dir.parent
-        if shell_dir.name.lower() not in {"windowspowershell", "powershell"}:
-            continue
-        lowered_parts = {part.lower() for part in module_dir.parts}
-        if lowered_parts.intersection({"program files", "program files (x86)", "system32"}):
-            continue
-        try:
-            module_dir.resolve().relative_to(home.expanduser().resolve())
-            user_level = True
-        except ValueError:
-            user_level = "documents" in lowered_parts
-        if not user_level:
-            continue
-        return shell_dir / "Microsoft.PowerShell_profile.ps1"
-    raise ValueError(
-        "无法从 PSModulePath 判断 PowerShell 5.1/7 profile；"
-        "请设置 CLAUDE_KEYSMITH_SHELL_RC 为目标 profile 的完整路径"
-    )
-
-
 def _env_case_insensitive(name: str) -> Optional[str]:
     """Read an environment variable with Windows-compatible case matching."""
     direct = os.environ.get(name)
@@ -357,6 +314,221 @@ def _env_case_insensitive(name: str) -> Optional[str]:
         if key.lower() == lowered:
             return value
     return None
+
+
+_POWERSHELL_PROFILE_NAME = "Microsoft.PowerShell_profile.ps1"
+_POWERSHELL_PROFILE_DIRS = ("WindowsPowerShell", "PowerShell")
+_DOCUMENTS_DIR_NAMES = ("Documents", "文档")
+_SYSTEM_MODULE_MARKERS = {"program files", "program files (x86)", "system32"}
+
+
+def _windows_documents_from_known_folder() -> Optional[Path]:
+    """Resolve the current user's Documents folder via SHGetKnownFolderPath."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        import uuid as uuid_mod
+    except ImportError:
+        return None
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_uint32),
+            ("Data2", ctypes.c_uint16),
+            ("Data3", ctypes.c_uint16),
+            ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    folder_id = uuid_mod.UUID("{FDD39AD0-238F-46AF-ADB4-6C85480369C7}")
+    guid = GUID(
+        folder_id.time_low,
+        folder_id.time_mid,
+        folder_id.time_hi_version,
+        (ctypes.c_ubyte * 8).from_buffer_copy(folder_id.bytes[8:]),
+    )
+    path_ptr = ctypes.c_wchar_p()
+    try:
+        hr = ctypes.windll.shell32.SHGetKnownFolderPath(
+            ctypes.byref(guid), 0, None, ctypes.byref(path_ptr)
+        )
+    except (AttributeError, OSError, ValueError, TypeError):
+        return None
+    if hr != 0 or not path_ptr.value:
+        return None
+    try:
+        return Path(path_ptr.value)
+    finally:
+        try:
+            ctypes.windll.ole32.CoTaskMemFree(path_ptr)
+        except (AttributeError, OSError, ValueError, TypeError):
+            pass
+
+
+def _windows_documents_from_registry() -> Optional[Path]:
+    """Resolve Documents from the user shell-folder registry (OneDrive-aware)."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "Personal")
+    except OSError:
+        return None
+    expanded = os.path.expandvars(str(value)).strip().strip('"')
+    return Path(expanded) if expanded else None
+
+
+def _path_identity(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(Path(path).expanduser())))
+
+
+def _home_is_windows_user_profile(home: Path) -> bool:
+    """True when *home* is the real Windows user profile, not a test/override HOME.
+
+    Known Folder / registry Documents must not leak into an isolated
+    CLAUDE_KEYSMITH_HOME or $HOME fixture. Path.home() on Windows reads
+    USERPROFILE and ignores Unix $HOME, which is the GUI sidecar case.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        home_key = _path_identity(home)
+    except (OSError, ValueError, TypeError):
+        return False
+    candidates = []
+    userprofile = _env_case_insensitive("USERPROFILE")
+    if userprofile:
+        candidates.append(userprofile)
+    try:
+        candidates.append(str(Path.home()))
+    except (OSError, RuntimeError):
+        pass
+    for candidate in candidates:
+        try:
+            if _path_identity(Path(candidate)) == home_key:
+                return True
+        except (OSError, ValueError, TypeError):
+            continue
+    return False
+
+
+def iter_user_documents_dirs(home: Path) -> List[Path]:
+    """Candidate Documents directories for the given keysmith home.
+
+    Machine Known Folder / shell-folder registry / USERPROFILE\\Documents are
+    only consulted when *home* is the real Windows user profile. Isolated test
+    homes and CLAUDE_KEYSMITH_HOME overrides stay inside that home.
+    """
+    ordered: List[Path] = []
+    seen = set()
+
+    def add(path: Optional[Path]) -> None:
+        if path is None:
+            return
+        try:
+            key = _path_identity(path)
+        except (OSError, ValueError, TypeError):
+            return
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append(Path(key))
+
+    if _home_is_windows_user_profile(home):
+        add(_windows_documents_from_known_folder())
+        add(_windows_documents_from_registry())
+        userprofile = _env_case_insensitive("USERPROFILE")
+        if userprofile:
+            for name in _DOCUMENTS_DIR_NAMES:
+                add(Path(userprofile) / name)
+    for name in _DOCUMENTS_DIR_NAMES:
+        add(home / name)
+    if not ordered:
+        add(home / "Documents")
+    return ordered
+
+
+def _split_ps_module_path(module_path: str) -> List[str]:
+    if not module_path.strip():
+        return []
+    if ";" in module_path:
+        entries = module_path.split(";")
+    elif os.pathsep == ":" and not re.match(r"^[A-Za-z]:[\\/]", module_path):
+        entries = module_path.split(os.pathsep)
+    else:
+        entries = [module_path]
+    cleaned: List[str] = []
+    for item in entries:
+        entry = item.strip().strip('"')
+        if entry:
+            cleaned.append(entry)
+    return cleaned
+
+
+def _profile_from_module_dir(module_dir: Path, home: Path) -> Optional[Path]:
+    """Return the CurrentUserCurrentHost profile for a user-level Modules path."""
+    if module_dir.name.lower() != "modules":
+        return None
+    shell_dir = module_dir.parent
+    if shell_dir.name.lower() not in {"windowspowershell", "powershell"}:
+        return None
+    lowered_parts = {part.lower() for part in module_dir.parts}
+    if lowered_parts.intersection(_SYSTEM_MODULE_MARKERS):
+        return None
+    try:
+        module_dir.expanduser().resolve().relative_to(home.expanduser().resolve())
+        user_level = True
+    except ValueError:
+        user_level = "documents" in lowered_parts or "文档" in module_dir.parts
+    if not user_level:
+        return None
+    return shell_dir / _POWERSHELL_PROFILE_NAME
+
+
+def _fallback_powershell_profile(home: Path) -> Path:
+    """Pick a user profile when PSModulePath has no recognizable user entry.
+
+    GUI / sidecar processes typically inherit no PowerShell engine environment,
+    so PSModulePath is empty or system-only. Prefer an already-created profile
+    file; otherwise target Windows PowerShell 5.1 under Documents, which is the
+    Win10 default host. $CLAUDE_KEYSMITH_SHELL_RC still overrides.
+    """
+    documents_dirs = iter_user_documents_dirs(home)
+    for docs in documents_dirs:
+        for shell_dir in _POWERSHELL_PROFILE_DIRS:
+            candidate = docs / shell_dir / _POWERSHELL_PROFILE_NAME
+            try:
+                if candidate.is_file():
+                    return candidate
+            except OSError:
+                continue
+    return documents_dirs[0] / "WindowsPowerShell" / _POWERSHELL_PROFILE_NAME
+
+
+def powershell_profile_path(home: Path) -> Path:
+    """Locate PowerShell profile for PS5 (WindowsPowerShell) or PS7 (PowerShell).
+
+    Override with $CLAUDE_KEYSMITH_SHELL_RC. Prefer the first user-level
+    PSModulePath entry when the current process actually has one (console
+    PowerShell / pwsh). When PSModulePath is missing or only system paths —
+    the Desktop sidecar case — fall back to the user Documents profile.
+    """
+    configured = os.environ.get("CLAUDE_KEYSMITH_SHELL_RC")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    module_path = _env_case_insensitive("PSModulePath") or ""
+    for entry in _split_ps_module_path(module_path):
+        profile = _profile_from_module_dir(Path(entry).expanduser(), home)
+        if profile is not None:
+            return profile
+    return _fallback_powershell_profile(home)
 
 
 def _path_key(path: Path) -> str:
@@ -2428,6 +2600,40 @@ def command_install(args) -> int:
     return 0
 
 
+def _unavailable_runtime_status(exc: BaseException) -> Dict[str, Any]:
+    """Runtime block used when the probe itself fails closed.
+
+    status --json must still emit a document so the GUI can show the real
+    reason instead of "CLI 未输出稳定 JSON".
+    """
+    message = str(exc)
+    return {
+        "supported": True,
+        "error": message,
+        "shell_kind": runtime_shell_kind(),
+        "system_prompt_file": "",
+        "append_prompt_file": "",
+        "settings_file": "",
+        "shell_rc": "",
+        "system_prompt_exists": False,
+        "append_prompt_exists": False,
+        "settings_system_prompt_aligned": False,
+        "shell_wrapper_present": False,
+        "shell_wrapper_managed": False,
+        "upstream_candidates": [],
+        "upstream_path": None,
+        "upstream_exists": False,
+        "shell_wrapper_current": False,
+        "legacy_launcher_detected": False,
+        "legacy_launcher_paths": [],
+        "legacy_launcher_conflict": False,
+        "legacy_launcher_conflict_paths": [],
+        "upgrade_required": True,
+        "runtime_ready": False,
+        "note": message,
+    }
+
+
 def collect_runtime_status(paths: ScopePaths, md_filename: str, planned: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Structured runtime status for user scope.
 
@@ -2553,7 +2759,10 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
         if paths.scope != "user":
             status["runtime"] = {"supported": False, "reason": "runtime status only for user scope"}
         else:
-            runtime_status = collect_runtime_status(paths, md_filename)
+            try:
+                runtime_status = collect_runtime_status(paths, md_filename)
+            except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
+                runtime_status = _unavailable_runtime_status(exc)
             status["runtime"] = runtime_status
             status["presence"].update(
                 {
@@ -2596,11 +2805,57 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
     return status
 
 
+def _status_error_payload(args: Any, message: str) -> Dict[str, Any]:
+    """status --json fail-closed document. GUI treats ok:false as ContractError."""
+    return {
+        "schema": JSON_SCHEMA,
+        "operation": "status",
+        "ok": False,
+        "error": message,
+        "blockers": [message],
+        "scope": getattr(args, "scope", None),
+        "root": None,
+        "memory_file": None,
+        "instruction_file": None,
+        "import_target": None,
+        "memory_file_exists": False,
+        "instruction_file_exists": False,
+        "import_block_exists": False,
+        "installed": False,
+        "presence": {
+            "memory_file": False,
+            "instruction_file": False,
+            "import_block": False,
+        },
+        "alignment": {"import_block_present": False},
+        "source_identity": {
+            "kind": "missing",
+            "instruction_sha256": None,
+            "instruction_size_bytes": None,
+            "drift": None,
+        },
+        "recovery_state": {
+            "journals": [],
+            "journal_count": 0,
+            "atomic_temp_files": [],
+            "atomic_temp_count": 0,
+            "conflicts": [],
+            "lock_present": False,
+            "lock_live": False,
+            "recovery_required": False,
+            "must_recover_before_writes": False,
+        },
+    }
+
+
 def command_status(args) -> int:
     try:
         status = collect_status(args.scope, args.project_dir, args.name, runtime=bool(getattr(args, "runtime", False)))
-    except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        print(f"[错误] {exc}")
+    except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
+        if args.json:
+            print(json.dumps(_status_error_payload(args, str(exc)), ensure_ascii=False, indent=2))
+        else:
+            print(f"[错误] {exc}")
         return 1
 
     if args.json:
@@ -3306,8 +3561,23 @@ def command_runtime_doctor(args) -> int:
             "shell_rc": str(rt["shell_rc"]),
             "repair_actions": repair_actions,
         }
-    except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        print(f"[错误] {exc}")
+    except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
+        message = str(exc)
+        status = {
+            "installation_type": "unavailable",
+            "upstream_candidates": [],
+            "upstream_path": None,
+            "system_prompt_file": "",
+            "append_prompt_file": "",
+            "settings_file": "",
+            "shell_kind": runtime_shell_kind(),
+            "shell_rc": "",
+            "repair_actions": [message],
+        }
+        if args.json:
+            print(json.dumps(status, ensure_ascii=False, indent=2))
+        else:
+            print(f"[错误] {message}")
         return 1
 
     if args.json:
