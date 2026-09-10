@@ -1,0 +1,5 @@
+secrets.env
+config/
+work/
+results/
+*.log

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1230" height="252" viewBox="0 0 1230 252" font-family="-apple-system, 'Segoe UI', 'Noto Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect width="1230" height="252" fill="#ffffff"/>
+<rect x="28" y="74" width="265" height="148" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+<rect x="28" y="74" width="265" height="34" rx="10" fill="#ddf4ff"/>
+<rect x="28" y="98" width="265" height="10" fill="#ddf4ff"/>
+<text x="44" y="97" font-size="15" font-weight="600" fill="#0969da">1 预览</text>
+<text x="44" y="136" font-size="14" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="600" fill="#24292f">install</text>
+<text x="44" y="162" font-size="12.5" fill="#57606a">查看 CLAUDE.md import block、</text>
+<text x="44" y="180" font-size="12.5" fill="#57606a">指令文件与备份计划</text>
+<path d="M 300 142.0 L 322 148.0 L 300 154.0" fill="none" stroke="#57606a" stroke-width="1.6"/>
+<rect x="331" y="74" width="265" height="148" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+<rect x="331" y="74" width="265" height="34" rx="10" fill="#ddf4ff"/>
+<rect x="331" y="98" width="265" height="10" fill="#ddf4ff"/>
+<text x="347" y="97" font-size="15" font-weight="600" fill="#0969da">2 写入</text>
+<text x="347" y="136" font-size="14" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="600" fill="#24292f">--yes</text>
+<text x="347" y="162" font-size="12.5" fill="#57606a">插入可卸载 import block，</text>
+<text x="347" y="180" font-size="12.5" fill="#57606a">写入 keysmith/*.md</text>
+<path d="M 603 142.0 L 625 148.0 L 603 154.0" fill="none" stroke="#57606a" stroke-width="1.6"/>
+<rect x="634" y="74" width="265" height="148" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+<rect x="634" y="74" width="265" height="34" rx="10" fill="#dafbe1"/>
+<rect x="634" y="98" width="265" height="10" fill="#dafbe1"/>
+<text x="650" y="97" font-size="15" font-weight="600" fill="#1a7f37">3 验证</text>
+<text x="650" y="136" font-size="14" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="600" fill="#24292f">新会话</text>
+<text x="650" y="162" font-size="12.5" fill="#57606a">开新 Claude Code 会话，</text>
+<text x="650" y="180" font-size="12.5" fill="#57606a">status 确认 import 已加载</text>
+<path d="M 906 142.0 L 928 148.0 L 906 154.0" fill="none" stroke="#57606a" stroke-width="1.6"/>
+<rect x="937" y="74" width="265" height="148" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+<rect x="937" y="74" width="265" height="34" rx="10" fill="#dafbe1"/>
+<rect x="937" y="98" width="265" height="10" fill="#dafbe1"/>
+<text x="953" y="97" font-size="15" font-weight="600" fill="#1a7f37">4 撤销</text>
+<text x="953" y="136" font-size="14" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="600" fill="#24292f">uninstall</text>
+<text x="953" y="162" font-size="12.5" fill="#57606a">预览并移除同名 import block，</text>
+<text x="953" y="180" font-size="12.5" fill="#57606a">指令文件一并卸载</text>
+</svg>
