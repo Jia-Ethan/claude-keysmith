@@ -52,6 +52,14 @@ Keysmith installs instructions onto local AI coding tools: preview, apply, verif
 3. **Start a new conversation.** A fresh session is required.
 4. **Remove it whenever you want.** Review the plan, then restore how it was.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/claude-keysmith-preview-dark.webp" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/claude-keysmith-preview-light.webp" />
+    <img src="docs/assets/readme/claude-keysmith-preview-light.webp" alt="Illustrative preview; actual paths and output follow the local dry-run" width="100%" />
+  </picture>
+</p>
+
 ## Which Keysmith to use
 
 | You use | Installer | How to start |
@@ -67,9 +75,9 @@ One installer per tool. An unsigned desktop build is also available.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-en-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-en-light.svg" />
-    <img alt="On the same 4 prompts, complete artifacts rose from 1 to 3" src="docs/assets/readme/results-en-light.svg" width="92%" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-en-dark.webp" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-en-light.webp" />
+    <img alt="On the same 4 prompts, complete artifacts rose from 1 to 3" src="docs/assets/readme/results-en-light.webp" width="92%" />
   </picture>
 </p>
 

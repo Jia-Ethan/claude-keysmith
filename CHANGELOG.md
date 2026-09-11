@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- README 插图换成系列暖金钥匙静物（hero、使用方式、dry-run 预览、1/4 → 3/4 效果图）。
 - README 改成产品说明首页（hero、使用方式、效果三张图）。默认项目规则同步更新。
 - Windows Desktop / sidecar 在没有用户级 `PSModulePath`（资源管理器启动的 GUI 进程常见）时，不再把 runtime 探测直接失败关闭。改为：仍优先使用 `PSModulePath` 里第一个可识别的用户 Modules 条目；没有时回退到用户 Documents 下已存在的 PowerShell profile，否则写入 Win10 默认的 `Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`。Known Folder / 注册表只在 *home* 就是当前 Windows 用户配置目录时启用，避免 `CLAUDE_KEYSMITH_HOME` 或测试夹具写到 runner 自己的 Documents。`CLAUDE_KEYSMITH_SHELL_RC` 仍然覆盖。
 - `status --json` / `doctor --json` 在 runtime 探测或 project-dir 校验失败时仍输出契约 JSON，GUI 不再把 stdout 里的 `[错误]` 文本显示成「状态加载失败 / CLI 未输出稳定 JSON」。

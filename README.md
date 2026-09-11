@@ -52,6 +52,14 @@ Keysmith 给本机的 AI 编程工具装指令：先预览，再写入，能验�
 3. **新开一轮对话。** 新会话才会生效。
 4. **随时撤走。** 同样先看计划，确认后恢复成原来的样子。
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/claude-keysmith-preview-dark.webp" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/claude-keysmith-preview-light.webp" />
+    <img src="docs/assets/readme/claude-keysmith-preview-light.webp" alt="示意预览；实际路径与输出以本机 dry-run 为准" width="100%" />
+  </picture>
+</p>
+
 ## 选哪个 Keysmith
 
 | 你在用 | 用这个 | 怎么开始 |
@@ -67,9 +75,9 @@ Keysmith 给本机的 AI 编程工具装指令：先预览，再写入，能验�
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-zh-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-zh-light.svg" />
-    <img alt="同一批 4 题，完整交出产物从 1 题到 3 题" src="docs/assets/readme/results-zh-light.svg" width="92%" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/results-zh-dark.webp" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/results-zh-light.webp" />
+    <img alt="同一批 4 题，完整交出产物从 1 题到 3 题" src="docs/assets/readme/results-zh-light.webp" width="92%" />
   </picture>
 </p>
 
