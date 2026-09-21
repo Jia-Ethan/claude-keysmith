@@ -323,6 +323,143 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "installed sidecar runtime uninstall failed: $runtimeUninstall" }
           if (-not (($runtimeUninstall | ConvertFrom-Json).ok)) { throw "installed sidecar uninstall contract is not ok" }
 
+          # Exercise close while a sidecar process tree is still active. Without
+          # the frontend process lease, Tauri drops only the direct child and
+          # this helper never reaches its completion marker.
+          $slowSmokeRoot = Join-Path $env:RUNNER_TEMP 'claude-keysmith-slow-sidecar'
+          New-Item -ItemType Directory -Force -Path $slowSmokeRoot | Out-Null
+          $slowSidecarSource = Join-Path $slowSmokeRoot 'slow-sidecar.rs'
+          $slowSidecarBinary = Join-Path $slowSmokeRoot 'slow-sidecar.exe'
+          $realSidecarBackup = Join-Path $slowSmokeRoot 'claude-keysmith-cli.real.exe'
+          $slowMarker = Join-Path $slowSmokeRoot 'slow-sidecar.marker'
+          # Bake the marker path into the fixture. Start-Process defaults to
+          # UseShellExecute on Windows, so a process-level environment variable
+          # never reaches the GUI or the sidecar it launches.
+          @'
+          use std::env;
+          use std::fs::OpenOptions;
+          use std::io::Write;
+          use std::process::Command;
+          use std::thread;
+          use std::time::Duration;
+
+          fn mark(value: &str) {
+              let marker = r#"__SLOW_MARKER_PATH__"#;
+              let mut file = OpenOptions::new()
+                  .create(true)
+                  .append(true)
+                  .open(marker)
+                  .expect("open marker");
+              writeln!(file, "{value}").expect("write marker");
+          }
+
+          fn main() {
+              if env::args().any(|arg| arg == "--slow-child") {
+                  thread::sleep(Duration::from_secs(6));
+                  mark("child-complete");
+                  return;
+              }
+
+              let executable = env::current_exe().expect("current executable");
+              let mut child = Command::new(executable)
+                  .arg("--slow-child")
+                  .spawn()
+                  .expect("spawn child");
+              mark("started");
+              assert!(child.wait().expect("wait for child").success());
+              mark("complete");
+              println!("claude-keysmith v7.2");
+          }
+          '@.Replace('__SLOW_MARKER_PATH__', $slowMarker) | Set-Content -LiteralPath $slowSidecarSource -Encoding UTF8
+          & rustc $slowSidecarSource -O -o $slowSidecarBinary
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $slowSidecarBinary)) {
+            throw "Failed to build the slow sidecar lifecycle fixture."
+          }
+          $sidecarIdleDeadline = [DateTime]::UtcNow.AddSeconds(15)
+          do {
+            $busySidecars = @(
+              Get-Process -Name "claude-keysmith*" -ErrorAction SilentlyContinue |
+                Where-Object {
+                  try { $_.Path.Equals($installedSidecar, [StringComparison]::OrdinalIgnoreCase) }
+                  catch { $false }
+                }
+            )
+            if ($busySidecars.Count -eq 0) { break }
+            Start-Sleep -Milliseconds 250
+          } while ([DateTime]::UtcNow -lt $sidecarIdleDeadline)
+          if ($busySidecars.Count -ne 0) {
+            throw "Installed sidecar remained busy before the slow-sidecar fixture swap."
+          }
+          Copy-Item -LiteralPath $installedSidecar -Destination $realSidecarBackup
+          $slowAppProcess = $null
+          try {
+            Copy-Item -LiteralPath $slowSidecarBinary -Destination $installedSidecar -Force
+            $slowAppProcess = Start-Process -FilePath $installedGui -WorkingDirectory $installDir -PassThru
+            $slowWindowDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 250
+              $slowAppProcess.Refresh()
+            } while (
+              -not $slowAppProcess.HasExited -and
+              $slowAppProcess.MainWindowHandle -eq 0 -and
+              [DateTime]::UtcNow -lt $slowWindowDeadline
+            )
+            if ($slowAppProcess.HasExited -or $slowAppProcess.MainWindowHandle -eq 0) {
+              throw "Slow-sidecar GUI did not expose its main window."
+            }
+            $slowMarkerDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              $slowMarkerText = if (Test-Path -LiteralPath $slowMarker) {
+                Get-Content -LiteralPath $slowMarker -Raw
+              }
+              else {
+                ""
+              }
+              if ($slowMarkerText -match "(?m)^started\r?$") { break }
+              Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $slowMarkerDeadline)
+            if ($slowMarkerText -notmatch "(?m)^started\r?$") {
+              throw "Slow sidecar did not start within 30 seconds."
+            }
+            Start-Sleep -Seconds 1
+            if (-not $slowAppProcess.CloseMainWindow()) {
+              throw "Slow-sidecar GUI rejected the native close request."
+            }
+            if (-not $slowAppProcess.WaitForExit(20000)) {
+              throw "Slow-sidecar GUI did not exit after the active process tree completed."
+            }
+            $slowMarkerText = Get-Content -LiteralPath $slowMarker -Raw
+            if (
+              $slowMarkerText -notmatch "(?m)^child-complete\r?$" -or
+              $slowMarkerText -notmatch "(?m)^complete\r?$"
+            ) {
+              throw "GUI closed before the active sidecar process tree completed."
+            }
+          }
+          finally {
+            if ($null -ne $slowAppProcess) {
+              $slowAppProcess.Refresh()
+              if (-not $slowAppProcess.HasExited) {
+                Stop-Process -Id $slowAppProcess.Id -Force -ErrorAction SilentlyContinue
+                $slowAppProcess.WaitForExit(5000) | Out-Null
+              }
+            }
+            $slowSidecarProcesses = @(
+              Get-Process -Name "claude-keysmith*" -ErrorAction SilentlyContinue |
+                Where-Object {
+                  try { $_.Path.Equals($installedSidecar, [StringComparison]::OrdinalIgnoreCase) }
+                  catch { $false }
+                }
+            )
+            foreach ($process in $slowSidecarProcesses) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              try { $process.WaitForExit(5000) | Out-Null }
+              catch {}
+            }
+            Copy-Item -LiteralPath $realSidecarBackup -Destination $installedSidecar -Force
+            Remove-Item -LiteralPath $slowSmokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
           # Hosted runners cannot judge visual layout, but they can prove the
           # installed WebView process starts and the single-instance guard holds.
           $firstGui = Start-Process -FilePath $installedGui -WorkingDirectory $installDir -PassThru
@@ -396,6 +533,7 @@ jobs:
             privacy_smoke = $true
             gui_process_smoke = $true
             single_instance_smoke = $true
+            close_while_sidecar_smoke = $true
             source_sidecar_sha256 = $sourceSidecarHash
             embedded_sidecar_sha256 = $installedSidecarHash
             channel        = 'beta'

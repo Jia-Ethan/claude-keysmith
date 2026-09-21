@@ -11,6 +11,19 @@
 
 本次不更新桌面版安装包。
 
+## Desktop 0.1.0-beta.3：未签名 Beta
+
+- GUI `0.1.0-beta.2` → `0.1.0-beta.3`，sidecar 升到 CLI `v7.2`。
+- 超时覆盖 leader 退出后仍被占用的输出管道；Windows 候选补 close-while-sidecar 关闭屏障。
+- 支持 macOS Apple Silicon 和 Windows x64；未签名、无自动更新。
+- 下载后请使用 `SHA256SUMS` 校验安装包。
+
+公开资产（待桥确认后发布）：
+
+- `claude-keysmith-desktop-0.1.0-beta.3-macos-arm64-unsigned.dmg`
+- `claude-keysmith-desktop-0.1.0-beta.3-windows-x64-unsigned-setup.exe`
+- `SHA256SUMS`
+
 ## Desktop 0.1.0-beta.2：未签名 Beta
 
 - 深色主题对齐 Codex tech blue。

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # claude-keysmith GUI — 工程规范（SPEC）
 
-版本 `0.1.0-beta.2`，channel `beta`，未签名 Pre-release。本规范描述桌面客户端的架构与不可违背的约束；所有条目都能在代码中找到对应实现。发布状态与验收见 [`../docs/platform-support.md`](../docs/platform-support.md) 与 [`../docs/beta-acceptance.md`](../docs/beta-acceptance.md)。
+版本 `0.1.0-beta.3`，channel `beta`，未签名 Pre-release。sidecar 冻结 CLI `v7.2`。本规范描述桌面客户端的架构与不可违背的约束；所有条目都能在代码中找到对应实现。发布状态与验收见 [`../docs/platform-support.md`](../docs/platform-support.md) 与 [`../docs/beta-acceptance.md`](../docs/beta-acceptance.md)。
 
 ## 1. 定位与边界
 
@@ -35,7 +35,7 @@ Rust 侧对 CLI 的全部责任：
 1. **定位**：sidecar 优先（与主程序同目录的 `claude-keysmith-cli`[`.exe`]）→ `CLAUDE_KEYSMITH_CLI` 环境变量 → 主程序目录 / `~/.claude-keysmith-gui` / `~/claude-keysmith` / `~/.local/bin` / `~/bin` / `/usr/local/bin` / `/opt/homebrew/bin` 中的 `claude-keysmith` / `claude-instruct.py` → PATH。`.py` 走 Python（`CLAUDE_KEYSMITH_PYTHON` 覆盖），runtime 标记为 `bundled` / `executable` / `python`。
 2. **启动**：`Command::new(program).args(argv)`——argv 数组，**永不** shell 字符串拼接。`kill_on_drop(true)`。
 3. **限量**：stdout/stderr 各 2 MiB 上限；超限继续排空管道（避免子进程阻塞在满管道上），但标记截断并以"输出不完整"失败关闭。
-4. **限时**：默认 30 s；`cli_version` 探测 15 s；前端写操作 120 s。超时杀**整棵进程树**：Unix `process_group(0)` + `kill(-pid, SIGKILL)`（覆盖 PyInstaller bootloader 子孙）；Windows `CREATE_NEW_PROCESS_GROUP` + `taskkill /PID <pid> /T /F`。
+4. **限时**：默认 30 s；`cli_version` 探测 15 s；前端写操作 120 s。超时杀**整棵进程树**：Unix `process_group(0)` + `kill(-pid, SIGKILL)`（覆盖 PyInstaller bootloader 子孙）；Windows `CREATE_NEW_PROCESS_GROUP` + `taskkill /PID <pid> /T /F`。`child.wait()` 成功后，管道 join 仍受同一 deadline 约束；leader 已退出但子孙仍占着管道时，对 wait 之前保存的 pid 进程组发 SIGKILL 并返回 `timed_out`，避免无上界 `read_task.await`。管道缺失仍 fail-closed。
 5. **解码**：UTF-8 lossy。
 
 暴露给前端的 Tauri command：`cli_run` / `detect_cli` / `cli_version` / `cli_runtime`（`src-tauri/src/lib.rs`）。
@@ -103,7 +103,7 @@ localStorage 单键 `claude-keysmith-gui:settings`：`cliPath`（留空 = 自动
 - 构建环境净化：`PYTHONNOUSERSITE=1`，删除 `PYTHONHOME` / `PYTHONPATH` / `PYTHONUSERBASE`；`PYTHON` 环境变量指定解释器（需 `pip install -r requirements-build.txt`）。
 - 产物原子落位 `src-tauri/binaries/claude-keysmith-cli-<triple>[.exe]`（先复制到临时名再 rename，Unix 下 `chmod 755`），随后 `--version` smoke，失败即构建失败。
 - `npm run bundle` 是唯一打包入口：先构建 sidecar，再加载 `tauri.bundle.conf.json` 启用 bundle 并声明 `externalBin`。常驻配置 `bundle.active=false`，裸 `tauri build` 只产 executable；即使显式传 `--bundles`，默认 `beforeBundleCommand` 也会拒绝。overlay 覆盖该 hook 后仍按 `TAURI_ENV_TARGET_TRIPLE` 校验目标 sidecar 存在且可执行。
-- macOS 目标由 `tauri.macos.conf.json` 声明 `app` + `dmg`；Windows 由 `tauri.windows.conf.json` 声明 NSIS currentUser + WebView2 downloadBootstrapper。Windows 原生 CI 已覆盖构建、静默安装/卸载、冻结 sidecar、PowerShell wrapper、restore/recover、隐私、GUI 进程与单实例，并在 source CLI 层覆盖旧 launcher 迁移/强杀恢复；两平台实体机用户路径验收均已完成，记录见发布验收文档。
+- macOS 目标由 `tauri.macos.conf.json` 声明 `app` + `dmg`；Windows 由 `tauri.windows.conf.json` 声明 NSIS currentUser + WebView2 downloadBootstrapper。Windows 原生 CI 已覆盖构建、静默安装/卸载、冻结 sidecar、PowerShell wrapper、restore/recover、隐私、GUI 进程、单实例，以及 sidecar 进程树仍活动时的关闭屏障（close-while-sidecar）；source CLI 层覆盖旧 launcher 迁移/强杀恢复。不改 doctor / backups / restore / recentProjects / exclusive-vs-shared lease。两平台实体机用户路径验收均已完成，记录见发布验收文档。
 
 ## 9. 不变量（改动必须保持）
 

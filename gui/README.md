@@ -36,8 +36,10 @@ cd src-tauri && cargo fmt --check && cargo check --locked && cargo test --locked
 
 - `src-tauri/src/cli_runner.rs` — process boundary: argv-array invocation,
   2 MiB output cap (fail closed on truncation), timeout kills the full process
-  tree, sidecar-first CLI resolution (`CLAUDE_KEYSMITH_CLI` /
-  `CLAUDE_KEYSMITH_PYTHON` env overrides).
+  tree (pipe drain after leader exit stays on the same deadline), sidecar-first
+  CLI resolution (`CLAUDE_KEYSMITH_CLI` / `CLAUDE_KEYSMITH_PYTHON` env
+  overrides). Packaged sidecar is CLI `v7.2`; GUI version comes from
+  `package.json` (`0.1.0-beta.3`).
 - `src/lib/parser.js` — `claude-keysmith/v1` JSON contract → view models.
 - `src/lib/api.js` — invoke wrapper + preview/execute pairs (every call passes
   `--json`; execute appends `--yes`).
