@@ -1,5 +1,9 @@
 # claude-keysmith GUI
 
+## 桌面停更
+
+這個獨立桌面不再發新的安裝包。已發出的版本保持原樣，不撤回，也不改成 Latest。之後的桌面只維護 [Keysmith Switch](https://github.com/Jia-Ethan/keysmith-switch)。範圍與進度見 [keysmith-switch#6](https://github.com/Jia-Ethan/keysmith-switch/issues/6)。
+
 Desktop client for `claude-keysmith` (`../claude-instruct.py`): a visual wrapper
 for Claude Code instruction + runtime injection. Tauri 2 + React + Vite.
 
