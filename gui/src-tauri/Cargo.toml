@@ -1,6 +1,6 @@
 [package]
 name = "claude-keysmith-gui"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 description = "Visual client for claude-keysmith"
 edition = "2021"
 

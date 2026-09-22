@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # 桌面客户端（GUI）架构与操作手册
 
-`gui/` 是 `claude-keysmith` 的桌面客户端，版本 `0.1.0-beta.2`，构建 channel `beta`，是**未签名 Pre-release**，不是稳定版。它是 CLI（`claude-instruct.py`）的可视化封装：所有文件写入都由 CLI 完成，GUI 自身不直接修改任何目标文件。
+`gui/` 是 `claude-keysmith` 的桌面客户端，版本 `0.1.0-beta.3`，构建 channel `beta`，sidecar 冻结 CLI `v7.2`，是**未签名 Pre-release**，不是稳定版。它是 CLI（`claude-instruct.py`）的可视化封装：所有文件写入都由 CLI 完成，GUI 自身不直接修改任何目标文件。
 
 - 技术栈：Tauri 2 + React 19 + Vite 6 + Tailwind CSS 4 + Radix UI + Motion；`react-i18next`（zh-CN / en）；`sonner` toast。
 - CLI 载体：PyInstaller onefile sidecar（`claude-keysmith-cli`），与 GUI 同源构建。
@@ -20,7 +20,7 @@ Rust 侧只负责"找到 CLI、按 argv 数组启动、限时限量收输出"：
 - **argv 数组调用**：`Command::new(program).args([...])`，从不做 shell 字符串拼接，无 shell 注入面。
 - **sidecar 优先**：打包产物优先使用与主程序同目录的 `claude-keysmith-cli`（PyInstaller onefile）；其后依次尝试 `CLAUDE_KEYSMITH_CLI` 环境变量、主程序目录与若干用户目录 / PATH 中的 `claude-keysmith` / `claude-instruct.py` 回退。`.py` 脚本走 Python 解释器（`CLAUDE_KEYSMITH_PYTHON` 可覆盖）。
 - **2 MiB 输出上限**：stdout/stderr 各自封顶 2 MiB，超限继续排空管道但标记截断，最终以"输出不完整"失败关闭，不会基于截断的 JSON 做决策。
-- **超时杀整棵进程树**：默认 30 s（`--version` 探测 15 s；前端写操作 120 s）。Unix：`process_group(0)` 建独立进程组 + `kill(-pid, SIGKILL)`；Windows：`CREATE_NEW_PROCESS_GROUP` + `taskkill /PID <pid> /T /F`。另有 `kill_on_drop(true)` 兜底。
+- **超时杀整棵进程树**：默认 30 s（`--version` 探测 15 s；前端写操作 120 s）。Unix：`process_group(0)` 建独立进程组 + `kill(-pid, SIGKILL)`；Windows：`CREATE_NEW_PROCESS_GROUP` + `taskkill /PID <pid> /T /F`。另有 `kill_on_drop(true)` 兜底。leader 退出后管道 join 仍受同一 deadline 约束；子孙仍占管道时对 wait 之前保存的 pid 进程组发 SIGKILL 并返回 `timed_out`。
 - **UTF-8 lossy** 解码输出；非 UTF-8 字节不致命，但 JSON 解析失败会失败关闭。
 
 前端每次调用都通过 `invoke("cli_run", { args, timeoutMs })`；所有业务调用一律带 `--json`，execute 追加 `--yes`（见 `src/lib/api.js`）。
