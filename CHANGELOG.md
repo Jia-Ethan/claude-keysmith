@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `install --agents` / `uninstall --agents`：写入或移除 keysmith 拥有的 `agents/keysmith.md`（user：`~/.claude/agents/`，project/local：`<repo>/.claude/agents/`），给 Task / 自定义子 agent 用。只动带标记的自己那份文件，失败关闭拒绝覆盖用户原文。默认 install 行为不变。
+- `status --json` 增加 `agents_file` / `agents_file_exists` / `agents_block_exists` 与 `presence.agents_file`、`alignment.agents_block_present`。`doctor --json` 仍是固定 9 键。
 - README 插图换成系列暖金钥匙静物（hero、使用方式、dry-run 预览、1/4 → 3/4 效果图）。
 - README 改成产品说明首页（hero、使用方式、效果三张图）。默认项目规则同步更新。
 
