@@ -29,7 +29,7 @@ CLI 与 GUI 都不会读取、修改或传输：
 
 ## 文件系统边界
 
-- 写入目标仅限：scope 的 memory 文件与 keysmith 目录、（user scope runtime）`~/.claude/settings.json`、shell profile，以及 Windows 旧 launcher 的确认迁移。每个目标在写入前都有 preview 可见。
+- 写入目标仅限：scope 的 memory 文件与 keysmith 目录、显式 `--agents` 时的 `agents/keysmith.md`（仅当该文件不存在或已带 keysmith 标记）、（user scope runtime）`~/.claude/settings.json`、shell profile，以及 Windows 旧 launcher 的确认迁移。每个目标在写入前都有 preview 可见。不改用户其它 `.claude/agents/*.md`。
 - GUI 的"最近项目"只记录用户通过文件对话框**显式选择过**的路径（最多 12 条），永不扫描磁盘。
 - 所有写操作默认 preview，必须显式确认（CLI `--yes` / GUI 确认对话框）才执行；写前备份、事务化、可恢复（见 [`transaction-recovery.md`](transaction-recovery.md)）。
 

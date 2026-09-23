@@ -2,7 +2,7 @@
 
 日常使用只需要 [`README.md`](../README.md) 的「快速开始」；本页是 import block、runtime wrapper、settings 对齐、journal 与维护者验证细节。JSON 契约见 [`json-contract.md`](json-contract.md)，事务恢复见 [`transaction-recovery.md`](transaction-recovery.md)，Desktop 见 [`desktop-gui.md`](desktop-gui.md)。
 
-`claude-keysmith` 管理 Claude Code 的两层持久化指令入口：import block 与可选 user-scope runtime wrapper。所有写入默认需要显式 `--yes`；没有 `--yes` 时命令只预览。
+`claude-keysmith` 管理 Claude Code 的持久化指令入口：import block、可选 user-scope runtime wrapper，以及可选 `--agents` 子 agent 载体。所有写入默认需要显式 `--yes`；没有 `--yes` 时命令只预览。
 
 ## import-block 层
 
@@ -21,6 +21,36 @@
 ```
 
 `install` 会插入或替换同名 block；不会覆盖其余 `CLAUDE.md` 内容。`uninstall` 也只会移除同名 block 与对应指令文件。
+
+## agents 层
+
+`install --agents` 额外写入一份 keysmith 拥有的 Claude Code 自定义 agent 定义，给 Task / `--agent keysmith` 用。主会话的 import block 与 runtime wrapper 语义不变。
+
+| Scope | 文件 |
+|---|---|
+| `user` | `~/.claude/agents/keysmith.md` |
+| `project` / `local` | `<repo>/.claude/agents/keysmith.md` |
+
+文件形状：YAML frontmatter（`name: keysmith`）+ 与 import block 同形的 managed 标记，正文为当前指令去掉首个 H1 后的内容，再拼上 append（`--append-file` 或内置 `examples/claude-append-prompt.md`）。
+
+所有权规则：
+
+- 文件不存在：创建。
+- 文件已有 `name: keysmith` 且带 `keysmith-agent` 标记：备份后整文件重写。
+- 同路径存在但没有 keysmith 标记：失败关闭，原文件不动。
+- 同目录其它 `*.md` 一律不读不写。
+- `uninstall --agents` 只删除这份自己拥有的文件。
+
+```bash
+python3 claude-instruct.py install --scope project --project-dir . --agents
+python3 claude-instruct.py install --scope project --project-dir . --agents --yes
+python3 claude-instruct.py status --scope project --project-dir . --json
+python3 claude-instruct.py uninstall --scope project --project-dir . --agents --yes
+```
+
+`status --json` 始终报告 `agents_file` / `agents_file_exists` / `agents_block_exists` 以及 `presence.agents_file`、`alignment.agents_block_present`。`installed` 仍只表示 import block + 指令文件；agents 是可选层。`doctor --json` 仍是固定 9 键。
+
+这层补的是 wrapper 到不了的子 agent 系统提示。它不替代 `--system-prompt-file`，也不写入 `.claude/rules`、`agent-memory` 或 `SKILL.md`。
 
 ## runtime 层
 
@@ -162,7 +192,8 @@ runtime status 保留已有字段，并增加：
 
 ## 限制
 
-- 只支持 `user` scope 的 runtime；project/local scope 仅支持 import-block 层。
+- 只支持 `user` scope 的 runtime；project/local scope 支持 import-block 与可选 `--agents`。
+- `--agents` 只管理 `agents/keysmith.md`；不注入其它自定义 agent，也不覆盖内置 Explore/Plan。
 - runtime wrapper 支持 macOS / Linux 的 zsh 与 Windows PowerShell 5.1 / PowerShell 7；不承诺支持 CMD 或 Git Bash wrapper。
 - 上游安装器仍可能改变 Claude Code 的安装布局；出现 `upgrade_required` 或入口不可用时，先 dry-run 检查，再重新安装 runtime 并做真实 smoke test。
 - 工具不验证 Claude Code 是否在某个既有会话中重新读取指令。启动新会话并按实际任务 smoke test。

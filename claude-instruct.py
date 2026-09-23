@@ -9,6 +9,8 @@ Layers:
        - ~/.claude/keysmith/append-prompt.md
        - settings.json systemPrompt alignment
        - shell wrapper that passes --system-prompt-file + --append-system-prompt-file
+  3. Optional --agents carrier: a keysmith-owned .claude/agents/keysmith.md
+     (user scope: ~/.claude/agents/keysmith.md) for Task/custom-agent system prompts
 
 Safety defaults:
   - Preview-only unless --yes is provided.
@@ -16,6 +18,8 @@ Safety defaults:
     tokens, or running processes.
   - Runtime injection only touches keysmith-owned prompt files, settings.systemPrompt
     alignment, and a managed shell wrapper block.
+  - --agents only creates or rewrites a file that already carries keysmith markers;
+    sibling agent files stay untouched.
   - Backs up touched files before overwriting or removing them.
 """
 
@@ -53,6 +57,12 @@ DEFAULT_EXAMPLE = _resource_base() / "examples" / "claude-project-rules.md"
 DEFAULT_APPEND_EXAMPLE = _resource_base() / "examples" / "claude-append-prompt.md"
 VERSION = "v7.2"
 ATOMIC_TEMP_MARKER = ".keysmith-tmp-"
+AGENT_TYPE = "keysmith"
+AGENT_FILENAME = "keysmith.md"
+AGENT_BLOCK_NAME = "keysmith-agent"
+AGENT_DESCRIPTION = (
+    "Delivers requested lab artifacts in this workspace: CTF, pentest fixtures, and creative writing."
+)
 
 SHELL_BEGIN = "# >>> claude-keysmith runtime >>>"
 SHELL_END = "# <<< claude-keysmith runtime <<<"
@@ -87,6 +97,14 @@ class ScopePaths:
 
     def import_target(self, md_filename: str) -> str:
         return f"@{self.import_prefix}/{md_filename}"
+
+    def agents_dir(self) -> Path:
+        if self.scope == "user":
+            return self.root / "agents"
+        return self.root / ".claude" / "agents"
+
+    def agents_file(self) -> Path:
+        return self.agents_dir() / AGENT_FILENAME
 
 
 def normalize_md_name(name: str) -> str:
@@ -276,6 +294,35 @@ def remove_import_block(content: str, name: str) -> Tuple[str, bool]:
     pattern = block_pattern(name)
     updated, count = pattern.subn("", content, count=1)
     return updated, bool(count)
+
+
+def render_agent_file(instruction_content: str, append_content: str) -> str:
+    """Owned Claude Code agent definition: YAML frontmatter + marked body."""
+    body = strip_markdown_h1(instruction_content).rstrip()
+    extra = (append_content or "").strip()
+    if extra:
+        body = f"{body}\n\n{extra}"
+    block = "\n".join(
+        [
+            START_TEMPLATE.format(name=AGENT_BLOCK_NAME),
+            body,
+            END_TEMPLATE.format(name=AGENT_BLOCK_NAME),
+        ]
+    )
+    return (
+        "---\n"
+        f"name: {AGENT_TYPE}\n"
+        f'description: "{AGENT_DESCRIPTION}"\n'
+        "---\n\n"
+        f"{ensure_trailing_newline(block)}"
+    )
+
+
+def keysmith_owns_agent_file(content: str) -> bool:
+    """True only when the file is a keysmith agent with matching markers."""
+    if not has_import_block(content, AGENT_BLOCK_NAME):
+        return False
+    return bool(re.search(r"(?m)^name:\s*keysmith\s*$", content or ""))
 
 
 def resolve_home() -> Path:
@@ -1952,7 +1999,7 @@ def load_journal(path: Path) -> Optional[Dict[str, Any]]:
 
 def _atomic_temp_directories(paths: ScopePaths) -> List[Path]:
     """Directories where scope-owned atomic writes can leave crash residue."""
-    directories = {paths.memory_file.parent, paths.keysmith_dir}
+    directories = {paths.memory_file.parent, paths.keysmith_dir, paths.agents_dir()}
     if paths.scope == "user":
         home = resolve_home()
         directories.add(home)
@@ -2065,6 +2112,7 @@ def enumerate_scope_backups(paths: ScopePaths, include_runtime: bool = True) -> 
 
     collect(paths.root, "memory")
     collect(paths.keysmith_dir, "instruction")
+    collect(paths.agents_dir(), "agents")
     if include_runtime and paths.scope == "user":
         rt = user_runtime_paths()
         collect(rt["keysmith_dir"], "runtime")
@@ -2310,9 +2358,22 @@ def command_install(args) -> int:
         runtime = bool(getattr(args, "runtime", False))
         if runtime and paths.scope != "user":
             raise ValueError("--runtime 仅支持 --scope user（需要写入 ~/.claude 与 shell wrapper）")
+        agents = bool(getattr(args, "agents", False))
         max_tokens = getattr(args, "max_tokens", None)
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError("--max-tokens 必须是正整数（>0）")
+        agents_content = ""
+        agents_path = paths.agents_file()
+        if agents:
+            agents_content = render_agent_file(
+                instruction_content, load_append_content(getattr(args, "append_file", None))
+            )
+            if agents_path.exists():
+                existing_agent = read_text_if_exists(agents_path)
+                if existing_agent and not keysmith_owns_agent_file(existing_agent):
+                    raise ValueError(
+                        f"拒绝覆盖非 keysmith 拥有的 agent 文件: {agents_path}"
+                    )
     except (FileNotFoundError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return _write_command_error(args, "install", str(exc))
 
@@ -2322,6 +2383,8 @@ def command_install(args) -> int:
         "instruction_file": str(paths.instruction_file(md_filename)),
         "import_target": paths.import_target(md_filename),
     }
+    if agents:
+        report["target"]["agents_file"] = str(agents_path)
     instruction_source = Path(args.file).expanduser().resolve() if args.file else DEFAULT_EXAMPLE
     report["source"] = source_descriptor(
         "external" if args.file else "bundled", instruction_source, instruction_content
@@ -2345,6 +2408,7 @@ def command_install(args) -> int:
         print(f"memory change: {'yes' if memory_changed else 'no'}")
         print(f"instruction bytes: {len(instruction_content.encode('utf-8'))}")
         print(f"runtime inject: {'yes' if runtime else 'no'}")
+        print(f"agents inject: {'yes' if agents else 'no'}")
 
     instruction_path = paths.instruction_file(md_filename)
     if not use_json:
@@ -2359,6 +2423,13 @@ def command_install(args) -> int:
     if instruction_path.exists():
         _add_action(report, "backup", instruction_path, "back up existing instruction file before overwrite")
     _add_action(report, "write", instruction_path, "write keysmith instruction file")
+    if agents:
+        if agents_path.exists():
+            _add_action(report, "backup", agents_path, "back up existing keysmith agent file before overwrite")
+        _add_action(report, "write", agents_path, "write keysmith-owned .claude/agents/keysmith.md")
+        if not use_json:
+            print(f"agents file: {agents_path}")
+            print(f"agents bytes: {len(agents_content.encode('utf-8'))}")
 
     runtime_plan: Optional[Dict[str, Any]] = None
     if runtime:
@@ -2461,6 +2532,7 @@ def command_install(args) -> int:
         for target, will_backup in [
             (paths.memory_file, paths.memory_file.exists()),
             (instruction_path, instruction_path.exists()),
+            (agents_path, agents and agents_path.exists()),
         ]:
             if will_backup:
                 _planned_backup(report, target)
@@ -2516,6 +2588,17 @@ def command_install(args) -> int:
         executed.append(("write", paths.memory_file, None))
         if not use_json:
             print(f"[写入] {paths.memory_file}")
+
+        if agents:
+            if agents_path.exists():
+                backup = tx_backup_step(journal, agents_path, timestamp)
+                _actual_backup(report, agents_path, backup)
+                if not use_json:
+                    print(f"[备份] {agents_path.name} → {backup.name}")
+            tx_write_step(journal, agents_path, agents_content)
+            executed.append(("write", agents_path, None))
+            if not use_json:
+                print(f"[写入] {agents_path}")
 
         if runtime_plan is not None:
             rt = runtime_plan["paths"]
@@ -2724,6 +2807,10 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
     instruction_exists = instruction_path.is_file()
     content = read_text_if_exists(paths.memory_file)
     block_exists = has_import_block(content, block_name)
+    agents_path = paths.agents_file()
+    agents_exists = agents_path.is_file()
+    agents_content = read_text_if_exists(agents_path) if agents_exists else ""
+    agents_owned = keysmith_owns_agent_file(agents_content)
     status: Dict[str, Any] = {
         "schema": JSON_SCHEMA,
         "scope": paths.scope,
@@ -2734,6 +2821,9 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
         "memory_file_exists": memory_exists,
         "instruction_file_exists": instruction_exists,
         "import_block_exists": block_exists,
+        "agents_file": str(agents_path),
+        "agents_file_exists": agents_exists,
+        "agents_block_exists": agents_owned,
         "installed": bool(block_exists and instruction_exists),
     }
 
@@ -2742,16 +2832,19 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
         "memory_file": memory_exists,
         "instruction_file": instruction_exists,
         "import_block": block_exists,
+        "agents_file": agents_exists,
     }
     status["alignment"] = {
         "import_block_present": block_exists,
         "import_target": paths.import_target(md_filename),
+        "agents_block_present": agents_owned,
     }
     status["source_identity"] = {
         "kind": "deployed" if instruction_exists else "missing",
         "instruction_sha256": file_evidence(instruction_path)["sha256"] if instruction_exists else None,
         "instruction_size_bytes": instruction_path.stat().st_size if instruction_exists else None,
         "drift": None,
+        "agents_sha256": file_evidence(agents_path)["sha256"] if agents_exists else None,
     }
     status["recovery_state"] = inspect_recovery_state(paths)
 
@@ -2821,18 +2914,23 @@ def _status_error_payload(args: Any, message: str) -> Dict[str, Any]:
         "memory_file_exists": False,
         "instruction_file_exists": False,
         "import_block_exists": False,
+        "agents_file": None,
+        "agents_file_exists": False,
+        "agents_block_exists": False,
         "installed": False,
         "presence": {
             "memory_file": False,
             "instruction_file": False,
             "import_block": False,
+            "agents_file": False,
         },
-        "alignment": {"import_block_present": False},
+        "alignment": {"import_block_present": False, "agents_block_present": False},
         "source_identity": {
             "kind": "missing",
             "instruction_sha256": None,
             "instruction_size_bytes": None,
             "drift": None,
+            "agents_sha256": None,
         },
         "recovery_state": {
             "journals": [],
@@ -2869,6 +2967,8 @@ def command_status(args) -> int:
     print(f"memory file exists: {'yes' if status['memory_file_exists'] else 'no'}")
     print(f"instruction file: {'yes' if status['instruction_file_exists'] else 'no'}")
     print(f"import block: {'yes' if status['import_block_exists'] else 'no'}")
+    print(f"agents file: {'yes' if status['agents_file_exists'] else 'no'} ({status['agents_file']})")
+    print(f"agents block: {'yes' if status['agents_block_exists'] else 'no'}")
     if "runtime" in status:
         rt = status["runtime"]
         if not rt.get("supported"):
@@ -2905,16 +3005,23 @@ def command_uninstall(args) -> int:
         runtime = bool(getattr(args, "runtime", False))
         if runtime and paths.scope != "user":
             raise ValueError("--runtime 仅支持 --scope user")
+        agents = bool(getattr(args, "agents", False))
     except (FileNotFoundError, ValueError, UnicodeDecodeError) as exc:
         return _write_command_error(args, "uninstall", str(exc))
 
     instruction_path = paths.instruction_file(md_filename)
+    agents_path = paths.agents_file()
+    agents_existing = read_text_if_exists(agents_path) if agents_path.exists() else ""
+    agents_owned = bool(agents_existing) and keysmith_owns_agent_file(agents_existing)
+    remove_agents = bool(agents and agents_owned)
     report = _write_report_base("uninstall", args, paths, name)
     report["target"] = {
         "memory_file": str(paths.memory_file),
         "instruction_file": str(instruction_path),
         "import_target": paths.import_target(md_filename),
     }
+    if agents:
+        report["target"]["agents_file"] = str(agents_path)
 
     if not preview_header_mode(args):
         residue_blockers = _blockers_for_recovery_residue(paths)
@@ -2932,6 +3039,9 @@ def command_uninstall(args) -> int:
         print(f"remove import block: {'yes' if memory_changed else 'no'}")
         print(f"remove instruction file: {'yes' if instruction_path.exists() else 'no'}")
         print(f"runtime uninstall: {'yes' if runtime else 'no'}")
+        print(f"agents uninstall: {'yes' if agents else 'no'}")
+        if agents and agents_path.exists() and not agents_owned:
+            print(f"agents file left intact (not keysmith-owned): {agents_path}")
 
     if paths.memory_file.exists() and memory_changed:
         _add_action(report, "backup", paths.memory_file, "back up memory file before import block removal")
@@ -2941,6 +3051,13 @@ def command_uninstall(args) -> int:
     if instruction_path.exists():
         _add_action(report, "backup", instruction_path, "back up instruction file before removal")
         _add_action(report, "remove", instruction_path, "remove keysmith instruction file")
+    if remove_agents:
+        _add_action(report, "backup", agents_path, "back up keysmith agent file before removal")
+        _add_action(report, "remove", agents_path, "remove keysmith-owned agent file")
+    elif agents and agents_path.exists() and not agents_owned:
+        report["warnings"].append(
+            f"agents file left intact (not keysmith-owned): {agents_path}"
+        )
 
     rt = user_runtime_paths() if runtime else None
     shell_rc_updated = ""
@@ -2979,6 +3096,8 @@ def command_uninstall(args) -> int:
             _planned_backup(report, paths.memory_file)
         if instruction_path.exists():
             _planned_backup(report, instruction_path)
+        if remove_agents:
+            _planned_backup(report, agents_path)
         if runtime and rt is not None:
             for path in (rt["system_prompt"], rt["append_prompt"]):
                 if path.exists():
@@ -3024,6 +3143,14 @@ def command_uninstall(args) -> int:
             tx_remove_step(journal, instruction_path)
             if not use_json:
                 print(f"[移除] {instruction_path}")
+        if remove_agents:
+            backup = tx_backup_step(journal, agents_path, timestamp)
+            _actual_backup(report, agents_path, backup)
+            if not use_json:
+                print(f"[备份] {agents_path.name} → {backup.name}")
+            tx_remove_step(journal, agents_path)
+            if not use_json:
+                print(f"[移除] {agents_path}")
 
         if runtime and rt is not None:
             for path in (rt["system_prompt"], rt["append_prompt"]):
@@ -3625,6 +3752,7 @@ def build_parser() -> argparse.ArgumentParser:
   %(prog)s install --scope project --dry-run
   %(prog)s install --scope user --name team-rules --yes
   %(prog)s install --scope user --runtime --yes
+  %(prog)s install --scope project --agents --yes
   %(prog)s status --scope user --runtime --json
   %(prog)s doctor --json
   %(prog)s uninstall --scope user --runtime --yes
@@ -3651,6 +3779,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="user scope 额外注入 system-prompt.md + append-prompt.md + settings.systemPrompt + shell wrapper",
     )
     install.add_argument(
+        "--agents",
+        action="store_true",
+        help="额外写入 keysmith 拥有的 agents/keysmith.md，给 Task/自定义子 agent 用；不改用户其它 agent 文件",
+    )
+    install.add_argument(
         "--append-file",
         help="runtime append 指令文件；默认 examples/claude-append-prompt.md",
     )
@@ -3673,6 +3806,11 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall = subparsers.add_parser("uninstall", help="移除自己的 managed block，并备份后移除对应指令文件")
     add_scope_args(uninstall)
     uninstall.add_argument("--runtime", action="store_true", help="同时移除 runtime 文件与 shell wrapper（不自动清空 settings.systemPrompt）")
+    uninstall.add_argument(
+        "--agents",
+        action="store_true",
+        help="同时移除 keysmith 拥有的 agents/keysmith.md（不碰用户其它 agent 文件）",
+    )
     uninstall.add_argument("--dry-run", action="store_true", help="兼容参数；默认就是预览模式")
     uninstall.add_argument("--yes", action="store_true", help="确认写入；未提供时只预览")
     uninstall.add_argument("--json", action="store_true", help="输出稳定 JSON（claude-keysmith/v1）")
