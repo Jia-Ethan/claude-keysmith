@@ -236,6 +236,26 @@ def test_status_json_keeps_flat_keys_and_adds_structured_blocks(tmp_path):
     assert payload["source_identity"]["instruction_sha256"]
     assert payload["recovery_state"]["recovery_required"] is False
     assert payload["recovery_state"]["journal_count"] == 0
+    competing = payload["competing_context"]
+    assert competing["wrapper_parent_only"] is True
+    assert competing["builtin_explore_plan_omit_claudemd"] is True
+    assert competing["extra_rules"] == []
+    assert competing["project_memory_md"] == []
+
+
+def test_status_json_competing_context_lists_extra_rules_and_memory(tmp_path):
+    home = tmp_path / "home"
+    run_cli(["install", "--scope", "user", "--name", "rules", "--yes"], home=home)
+    rules_dir = home / ".claude" / "rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "extra.md").write_text("# extra\n", encoding="utf-8")
+    memory = home / ".claude" / "MEMORY.md"
+    memory.write_text("standing note\n", encoding="utf-8")
+
+    payload = parse_json(run_cli(["status", "--scope", "user", "--name", "rules", "--json"], home=home))
+    competing = payload["competing_context"]
+    assert "extra.md" in competing["extra_rules"]
+    assert any(path.endswith("MEMORY.md") for path in competing["project_memory_md"])
 
 
 def test_status_json_runtime_readiness_block(tmp_path):

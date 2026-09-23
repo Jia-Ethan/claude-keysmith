@@ -2798,6 +2798,32 @@ def collect_runtime_status(paths: ScopePaths, md_filename: str, planned: Optiona
     }
 
 
+def collect_competing_context(paths: ScopePaths, runtime_status: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Surfaces instruction slots that can override the managed wrapper/import."""
+    rules_dir = paths.root / "rules" if paths.scope == "user" else paths.root / ".claude" / "rules"
+    extra_rules: List[str] = []
+    if rules_dir.is_dir():
+        extra_rules = [item.name for item in sorted(rules_dir.glob("*.md")) if item.is_file()]
+    memory_md: List[str] = []
+    candidates = [paths.root / "MEMORY.md"]
+    if paths.scope != "user":
+        candidates.append(paths.root / ".claude" / "MEMORY.md")
+    for candidate in candidates:
+        if candidate.is_file():
+            memory_md.append(str(candidate))
+    upgrade: Optional[bool] = None
+    if isinstance(runtime_status, dict) and "upgrade_required" in runtime_status:
+        upgrade = bool(runtime_status.get("upgrade_required"))
+    return {
+        "wrapper_parent_only": True,
+        "builtin_explore_plan_omit_claudemd": True,
+        "agents_carrier": paths.agents_file().is_file(),
+        "extra_rules": extra_rules,
+        "project_memory_md": memory_md,
+        "host_upgrade_required": upgrade,
+    }
+
+
 def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: bool = False) -> dict:
     md_filename = normalize_md_name(name)
     block_name = marker_name(md_filename)
@@ -2847,6 +2873,7 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
         "agents_sha256": file_evidence(agents_path)["sha256"] if agents_exists else None,
     }
     status["recovery_state"] = inspect_recovery_state(paths)
+    status["competing_context"] = collect_competing_context(paths, None)
 
     if runtime:
         if paths.scope != "user":
@@ -2895,6 +2922,7 @@ def collect_status(scope: str, project_dir: Optional[str], name: str, runtime: b
                 "runtime_ready": runtime_status["runtime_ready"],
             }
             status["installed"] = bool(status["installed"] and runtime_status["runtime_ready"])
+            status["competing_context"] = collect_competing_context(paths, runtime_status)
     return status
 
 
@@ -2942,6 +2970,14 @@ def _status_error_payload(args: Any, message: str) -> Dict[str, Any]:
             "lock_live": False,
             "recovery_required": False,
             "must_recover_before_writes": False,
+        },
+        "competing_context": {
+            "wrapper_parent_only": True,
+            "builtin_explore_plan_omit_claudemd": True,
+            "agents_carrier": False,
+            "extra_rules": [],
+            "project_memory_md": [],
+            "host_upgrade_required": None,
         },
     }
 

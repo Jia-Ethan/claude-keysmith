@@ -220,6 +220,7 @@ target 在 runtime 安装时扩展为包含 `system_prompt_file`、`append_promp
 | `source_identity` | `kind`（`deployed`/`missing`）、`instruction_sha256`、`instruction_size_bytes`、`drift`、`agents_sha256`、`system_prompt_sha256`、`settings_system_prompt_drift` |
 | `runtime_readiness` | `upstream_candidates`、`upstream_path`、`upstream_exists`、`shell_wrapper_current`、`upgrade_required`、`legacy_launcher_detected`、`legacy_launcher_paths`、`legacy_launcher_conflict`、`legacy_launcher_conflict_paths`、`runtime_ready`（仅 user scope `--runtime`） |
 | `recovery_state` | `journals`、`journal_count`、`atomic_temp_files`、`atomic_temp_count`、`conflicts`、`lock_present`、`lock_live`、`recovery_required`、`must_recover_before_writes` |
+| `competing_context` | `wrapper_parent_only`、`builtin_explore_plan_omit_claudemd`、`agents_carrier`、`extra_rules`、`project_memory_md`、`host_upgrade_required`（仅 `--runtime` 时填入；Explore/Plan 走 `omitClaudeMd`，主会话 wrapper 管不到子 agent） |
 | `runtime` | 完整 runtime 状态（仅 user scope `--runtime`；非 user scope 为 `{supported: false, reason: ...}`） |
 
 `recovery_state.journals[]` 条目：`{journal_path, journal_id, operation, state, started_at, pid}`。`runtime_ready` 只有在 prompt 文件完整、settings 对齐、wrapper 为当前 v7.2 模板、上游入口存在且无旧 launcher 冲突时才为 `true`。user-scope `--runtime` 的 profile 探测失败时 `runtime.error` 为原因字符串，`runtime_readiness.runtime_ready` 为 `false`，其余 presence / recovery 块仍可用。project-dir 不存在时整个 status 文档为 `ok: false`。
