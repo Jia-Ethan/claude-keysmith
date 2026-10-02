@@ -55,7 +55,7 @@ describe('Keysmith native hooks', () => {
       expect((await $.prompt.context({ blocks: BLOCKS, instructionFiles: [] })).blocks).toEqual(BLOCKS)
       expect(fixture.agents).toEqual([])
       const status = await $.command.run({ command: 'keysmith-status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
-      expect(status.text).toContain('paused:')
+      expect(status.text).toContain('已暂停：')
       expect(status.text).not.toContain('SECRET_ERROR_SENTINEL')
       expect(fixture.logs.join('\n')).not.toContain('SECRET_ERROR_SENTINEL')
     })
@@ -140,9 +140,9 @@ describe('Keysmith native hooks', () => {
     await $.session.start(SESSION)
     await $.prompt.context({ blocks: BLOCKS, instructionFiles: [] })
     const status = await $.command.run({ command: 'keysmith-status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
-    expect(status.text).toContain(`mode: ${options.mode}`)
-    expect(status.text).toContain(options.mode === 'runtime' ? 'verified composition (probe;' : 'context hook applied;')
-    expect(status.text).toContain('smoke test')
+    expect(status.text).toContain(`模式：${options.mode}`)
+    expect(status.text).toContain(options.mode === 'runtime' ? '提示词组成已验证（探测结果；' : 'context hook 已应用；')
+    expect(status.text).toContain('新会话实测')
   })
 
   test('agent registration failure leaves main prompt support available', async ($, on) => {
@@ -150,7 +150,7 @@ describe('Keysmith native hooks', () => {
     await $.session.start(SESSION)
     expect((await $.prompt.compose(COMPOSE)).sections).toEqual(options.mode === 'runtime' ? sectionsOf(RULES, APPEND) : BASE)
     const status = await $.command.run({ command: 'keysmith-status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
-    expect(status.text).toContain(options.registerAgent ? 'agent: not registered' : 'agent: disabled')
+    expect(status.text).toContain(options.registerAgent ? 'agent：未注册' : 'agent：已禁用')
   })
 
   test('managed prompt hooks can skip user mods without a fallback injection', {
@@ -171,7 +171,7 @@ describe('Keysmith native hooks', () => {
     expect((await $.prompt.compose(COMPOSE)).sections).toEqual(BASE)
     expect((await $.prompt.context({ blocks: BLOCKS, instructionFiles: [] })).blocks).toEqual(BLOCKS)
     const status = await $.command.run({ command: 'keysmith-status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
-    expect(status.text).toContain(options.mode === 'runtime' ? 'not verified:' : 'not observed;')
+    expect(status.text).toContain(options.mode === 'runtime' ? '未验证：' : '尚未观察到 hook 调用；')
   })
 
   test('refused plugin applies no effects before the host reports refusal', {
@@ -199,7 +199,7 @@ describe('Keysmith native hooks', () => {
     expect(isAbsoluteFile('/中文/space dir/rules.md')).toBe(true)
     expect(isAbsoluteFile('C:\\中文\\space dir\\rules.md')).toBe(true)
     for (const path of ['relative.md', '~/rules.md', 'C:relative.md', '\\\\server\\rules.md', '//server/rules.md']) {
-      expect(() => optionsOf({ rulesFile: path })).toThrow('absolute local paths')
+      expect(() => optionsOf({ rulesFile: path })).toThrow('本地绝对路径')
     }
     expect(contextOf([{ name: CONTEXT_NAME, text: 'old' }, ...BLOCKS], RULES)).toEqual(contextOf(BLOCKS, RULES))
   })

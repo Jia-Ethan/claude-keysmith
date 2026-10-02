@@ -23,11 +23,11 @@ export function optionsOf(raw: PluginOptions): Options {
   const rulesFile = raw.rulesFile ?? ''
   const appendFile = raw.appendFile ?? ''
   const registerAgent = raw.registerAgent ?? true
-  if (mode !== 'runtime' && mode !== 'context') throw new Error('Invalid mode')
-  if (typeof registerAgent !== 'boolean') throw new Error('Invalid registerAgent')
+  if (mode !== 'runtime' && mode !== 'context') throw new Error('mode 必须为 runtime 或 context')
+  if (typeof registerAgent !== 'boolean') throw new Error('registerAgent 必须为布尔值')
   for (const path of [rulesFile, appendFile]) {
     if (typeof path !== 'string' || (path !== '' && !isAbsoluteFile(path))) {
-      throw new Error('Custom prompt files must have absolute local paths')
+      throw new Error('自定义提示词文件必须使用本地绝对路径')
     }
   }
   return { mode, rulesFile: rulesFile as string, appendFile: appendFile as string, registerAgent }

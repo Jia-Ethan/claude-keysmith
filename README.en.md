@@ -96,7 +96,7 @@ python3 claude-instruct.py install --scope project --project-dir . --yes
 
 Then open a new Claude Code session. You can also hand the [agent-install notes](docs/agent-install.md) to an AI assistant. Details live in the [guide](docs/reference.md).
 
-**Optional: official mods API backend.** With Claude Code 2.1.287+, run `claude --plugin-dir /path/to/claude-keysmith` from a checkout containing the plugin files. The community plugin is named `keysmith`; it replaces the system prompt and adds append text by default, with a context mode that preserves the default prompt. Migrate existing import/wrapper deployments first, then run `/keysmith-status` in a new session. See [configuration, migration and limits](docs/mods.md). The original `v7.2` tag does not include this backend; CLI defaults are unchanged.
+**Optional: official mods API backend.** With Claude Code 2.1.287+, run `claude --plugin-dir /path/to/claude-keysmith` from a checkout containing the plugin files. The community plugin is named `keysmith`; it replaces the system prompt and adds append text by default, with a context mode that preserves the default prompt. Migrate existing import/wrapper deployments first, then run `/keysmith-status` in a new session. See [configuration, migration and limits](docs/mods.en.md). The original `v7.2` tag does not include this backend; CLI defaults are unchanged.
 
 ## Undo
 
@@ -116,7 +116,7 @@ macOS, Windows, and Linux. Python 3.8+.
 - [Guide](docs/reference.md)
 - [Agent install](docs/agent-install.md)
 - [Privacy](docs/privacy-security.md)
-- [Optional mod backend](docs/mods.md)
+- [Optional mod backend](docs/mods.en.md)
 
 ## Series
 

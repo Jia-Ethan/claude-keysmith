@@ -1,35 +1,40 @@
 {
   "name": "keysmith",
   "version": "0.1.0",
-  "description": "Optional official mod backend for Keysmith instruction deployment. Runtime mode replaces the system prompt; context mode adds project rules. Requires Claude Code 2.1.287+.",
-  "author": { "name": "Jia-Ethan" },
+  "description": "可选 Keysmith mod 后端，使用 Claude Code 官方 mods API。runtime 替换系统提示词，context 加入规则上下文。要求 Claude Code 2.1.287+。",
+  "author": {
+    "name": "Jia-Ethan"
+  },
   "homepage": "https://github.com/Jia-Ethan/claude-keysmith",
   "repository": "https://github.com/Jia-Ethan/claude-keysmith",
   "license": "MIT",
   "userConfig": {
     "mode": {
       "type": "string",
-      "title": "Injection mode",
-      "description": "runtime replaces the default system prompt with rules followed by append text. context preserves the system prompt and adds rules to the first-message context.",
+      "title": "注入模式",
+      "description": "runtime 用规则和追加文本替换默认系统提示词；context 保留系统提示词，将规则加入首条消息上下文。",
       "default": "runtime",
-      "options": ["runtime", "context"]
+      "options": [
+        "runtime",
+        "context"
+      ]
     },
     "rulesFile": {
       "type": "string",
-      "title": "Rules file",
-      "description": "Absolute path to custom Markdown rules. Empty uses the plugin's examples/claude-project-rules.md.",
+      "title": "规则文件",
+      "description": "自定义 Markdown 规则的绝对路径；留空时使用插件内置 examples/claude-project-rules.md。",
       "default": ""
     },
     "appendFile": {
       "type": "string",
-      "title": "Append file",
-      "description": "Absolute path to append text. Empty uses examples/claude-append-prompt.md. A custom empty file disables append text. Used by runtime mode and the optional Keysmith agent.",
+      "title": "追加文件",
+      "description": "追加文本的绝对路径；留空时使用 examples/claude-append-prompt.md。指定内容为空的文件可关闭追加。用于 runtime 模式和可选 Keysmith agent。",
       "default": ""
     },
     "registerAgent": {
       "type": "boolean",
-      "title": "Register Keysmith agent",
-      "description": "Offer keysmith:keysmith with these same rules and append text. Does not change other custom or built-in agents.",
+      "title": "注册 Keysmith agent",
+      "description": "使用同一份规则和追加文本注册 keysmith:keysmith，不修改其他自定义或内置 agent。",
       "default": true
     }
   }
