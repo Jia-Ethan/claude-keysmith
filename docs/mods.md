@@ -50,6 +50,8 @@ claude plugin install keysmith@keysmith-mods --scope user
 }
 ```
 
+安装时显示 `4 userConfig options not yet set` 表示尚未显式设置选项，不是安装失败。插件使用下表的默认值；只需在需要修改时运行配置命令，再开新会话。
+
 | 配置 | 默认值 | 行为 |
 |---|---|---|
 | `mode` | `runtime` | `runtime` 替换系统提示词；`context` 保留系统提示词，将规则加入首条消息的上下文。 |

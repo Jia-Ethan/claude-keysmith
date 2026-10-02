@@ -66,6 +66,8 @@ marketplace installation use `keysmith@keysmith-mods`.
 }
 ```
 
+The installation message `4 userConfig options not yet set` means no explicit values were saved, not that installation failed. The plugin uses the defaults below; configure options only when needed, then start a new session.
+
 | Option | Default | Behavior |
 |---|---|---|
 | `mode` | `runtime` | `runtime` replaces the system prompt; `context` preserves it and adds rules to the first-message context. |

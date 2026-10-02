@@ -98,6 +98,15 @@ Then open a new Claude Code session. You can also hand the [agent-install notes]
 
 **Optional: official mods API backend.** With Claude Code 2.1.287+, run `claude --plugin-dir /path/to/claude-keysmith` from a checkout containing the plugin files. The community plugin is named `keysmith`; it replaces the system prompt and adds append text by default, with a context mode that preserves the default prompt. Migrate existing import/wrapper deployments first, then run `/keysmith-status` in a new session. See [configuration, migration and limits](docs/mods.en.md). The original `v7.2` tag does not include this backend; CLI defaults are unchanged.
 
+Install once to load automatically with plain `claude`. Before this PR is merged, use a local checkout containing the plugin files:
+
+```bash
+claude plugin marketplace add /absolute/path/to/claude-keysmith
+claude plugin install keysmith@keysmith-mods --scope user
+```
+
+After the change is merged, the first command can instead use `claude plugin marketplace add Jia-Ethan/claude-keysmith`. Migrate legacy injection first, then start a new session and run `/keysmith-status`. Unset configuration options use the defaults above; adjust them with `/plugin configure keysmith@keysmith-mods` if needed.
+
 ## Undo
 
 ```bash

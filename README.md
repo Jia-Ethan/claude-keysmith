@@ -98,6 +98,15 @@ python3 claude-instruct.py install --scope project --project-dir . --yes
 
 **可选：官方 mods API 后端。** Claude Code 2.1.287+ 可从含插件文件的源码 checkout 使用 `claude --plugin-dir /path/to/claude-keysmith`；插件名为 `keysmith`。默认替换系统提示词并追加文本，也支持保留系统提示词的 context 模式。先检查并迁移旧 import/wrapper，再开新会话运行 `/keysmith-status`。[配置、迁移与限制](docs/mods.md)。原 `v7.2` tag 不含此后端，CLI 的默认行为保持不变。
 
+一次安装后即可用普通 `claude` 自动加载。当前 PR 可从含插件文件的本机 checkout 安装：
+
+```bash
+claude plugin marketplace add /absolute/path/to/claude-keysmith
+claude plugin install keysmith@keysmith-mods --scope user
+```
+
+改动合入上游后，首条命令也可使用 `claude plugin marketplace add Jia-Ethan/claude-keysmith`。先清理旧注入，安装后开新会话运行 `/keysmith-status`。安装提示选项未设置时会使用上述默认模式；需要调整可运行 `/plugin configure keysmith@keysmith-mods`。
+
 ## 怎么撤走
 
 ```bash
