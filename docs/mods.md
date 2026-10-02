@@ -29,7 +29,8 @@ claude plugin install keysmith@keysmith-mods
 The plugin is named **`keysmith`**: Claude Code reserves the `claude-` prefix for
 first-party plugins. The repository and legacy CLI keep `claude-keysmith`.
 
-Use `/config` for the plugin's options, then start a new session. Alternatively,
+Use `/plugin configure keysmith@keysmith-mods` (or the plugin options in `/config`),
+then start a new session. Alternatively,
 merge the following entry into the appropriate Claude Code settings file. Keep
 unrelated settings. For `--plugin-dir`, use the key `keysmith@inline`; for a
 marketplace installation use `keysmith@keysmith-mods`.

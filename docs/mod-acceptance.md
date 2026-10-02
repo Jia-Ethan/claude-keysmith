@@ -12,6 +12,10 @@ deployment or user configuration cleanup was performed.
   `python3 tools/test_mod.py`. Runtime bundled, context with/without agent, and
   custom absolute files with Chinese characters and spaces were exercised.
 - Each variant passed strict validation of both plugin and marketplace manifests.
+- Supplementary strict TypeScript checking passed against Anthropic's published
+  declarations at `684800b206824dfd0cc8a876e8604b20f72c3617` (whose generated-file
+  header names 2.1.277). The native 2.1.287 validator/tests and live sessions,
+  rather than that older header, establish the target runtime compatibility.
 - Native policy fixtures exercised managed-tier prompt bypass and plugin refusal.
   They do not stand in for an actual Team/Enterprise organization account.
 - The CI workflow pins 2.1.287 on Linux, macOS and Windows. Local execution alone
@@ -55,6 +59,11 @@ final answer: the parent continued to use its own Keysmith markers.
 `/keysmith-status` was also run headlessly with plugin options supplied through
 `pluginConfigs["keysmith@inline"].options`. It reported the selected custom files,
 registered agent, and verified the final composition's IDs, text and scope.
+
+A local marketplace was added and `keysmith@keysmith-mods` installed into the
+temporary config directory. A new headless session without `--plugin-dir`, with
+options keyed by `keysmith@keysmith-mods`, successfully ran `/keysmith-status`
+and verified composition. The user's actual plugin installation was untouched.
 
 The startup command `--agent keysmith:keysmith` failed with “not found”, because
 dynamic registration runs after startup agent selection. Use Agent-tool
