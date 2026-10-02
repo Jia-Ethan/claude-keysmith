@@ -15,11 +15,20 @@ claude --plugin-dir /absolute/path/to/claude-keysmith
 /keysmith-status
 ```
 
-此改动合入上游 `main` 后，可通过 marketplace 持久安装：
+**一次安装，后续自动加载：** 不必等 PR 合并，可以直接添加本机源码目录中的 marketplace，并以 `user` 范围安装。请将路径替换为本机目录：
+
+```bash
+claude plugin marketplace add /absolute/path/to/claude-keysmith
+claude plugin install keysmith@keysmith-mods --scope user
+```
+
+退出已有 Claude Code 会话，之后直接运行 `claude` 即可，不需要 `--plugin-dir`，也不需要新增 shell wrapper。用户级安装适用于各项目；仍应先迁移原有的 Keysmith 注入。持久安装与 `--plugin-dir` 试用对应不同配置键，请使用下文的 `keysmith@keysmith-mods` 配置。
+
+此改动合入上游 `main` 后，也可将 marketplace 来源设为上游仓库：
 
 ```bash
 claude plugin marketplace add Jia-Ethan/claude-keysmith
-claude plugin install keysmith@keysmith-mods
+claude plugin install keysmith@keysmith-mods --scope user
 ```
 
 插件名为 **`keysmith`**：Claude Code 将 `claude-` 前缀保留给第一方插件。仓库名和旧 CLI 仍使用 `claude-keysmith`。

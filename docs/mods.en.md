@@ -20,11 +20,26 @@ claude --plugin-dir /absolute/path/to/claude-keysmith
 /keysmith-status
 ```
 
-Persistent installation, after this change is available on upstream `main`:
+**Install once, then load automatically:** before this PR is merged, add the
+marketplace from your local checkout and install at user scope:
+
+```bash
+claude plugin marketplace add /absolute/path/to/claude-keysmith
+claude plugin install keysmith@keysmith-mods --scope user
+```
+
+Exit existing Claude Code sessions. Subsequent sessions started with plain
+`claude` load the plugin without `--plugin-dir` or a new shell wrapper. User-scope
+installation applies across projects; migrate legacy Keysmith injection first.
+Persistent installation uses the `keysmith@keysmith-mods` configuration key below,
+rather than the inline key used by `--plugin-dir`.
+
+After this change is available on upstream `main`, the marketplace can also be
+added from the upstream repository:
 
 ```bash
 claude plugin marketplace add Jia-Ethan/claude-keysmith
-claude plugin install keysmith@keysmith-mods
+claude plugin install keysmith@keysmith-mods --scope user
 ```
 
 The plugin is named **`keysmith`**: Claude Code reserves the `claude-` prefix for
