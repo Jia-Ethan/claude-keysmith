@@ -1,0 +1,13 @@
+{
+  "name": "keysmith-mods",
+  "metadata": { "description": "Keysmith instruction deployment through the Claude Code mods API" },
+  "owner": { "name": "Jia-Ethan" },
+  "plugins": [
+    {
+      "name": "keysmith",
+      "source": "./",
+      "description": "Optional official Keysmith mod backend for Claude Code 2.1.287+",
+      "version": "0.1.0"
+    }
+  ]
+}

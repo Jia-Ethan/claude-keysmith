@@ -19,6 +19,13 @@ CLI 与 GUI 都不会读取、修改或传输：
 - 备份与 source 证据只含 `sha256` / `size_bytes` 指纹，不含文件内容。
 - `settings.json` 中的 `"claude-keysmith recovery marker"` 是 keysmith 自用的恢复标记键（布尔值），不含任何凭证语义。
 
+## 可选 mod 后端
+
+- `keysmith` 插件使用官方 mods API；加载入口和迁移步骤见 [`mods.md`](mods.md)。它与原 CLI/GUI 是不同的部署路径，不自动切换旧用户。
+- hooks 只读取所选 Markdown、指令 ancestor walk、已知旧 runtime 文件和 shell profile，检查 managed 标记及已加载规则。通过 `$.settings.read()` 获取 host 的设置快照时仅检查 `systemPrompt`，不访问其它字段值、不输出设置对象或原始异常。
+- 插件不写文件、不执行进程、不发起网络请求、不修改现有 hooks/permissions；命令与 agent 通过官方 API 注册，卸载时由 host 撤销。Claude Code 自己的插件安装与配置行为由用户显式调用。
+- 文件加载或冲突检查失败时不应用部分文本；确认配置冲突时暂停新注入。遵守组织 managed 策略，不用其它事件绕过被跳过的 compose/context hooks。
+
 ## GUI 进程边界
 
 - CLI 一律以 argv 数组启动（`Command::new(...).args([...])`），从不经过 shell 字符串拼接；前端构造的参数也是字符串数组（`parser.js` 的 `build*Args`）。

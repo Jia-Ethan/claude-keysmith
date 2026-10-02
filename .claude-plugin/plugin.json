@@ -1,0 +1,36 @@
+{
+  "name": "keysmith",
+  "version": "0.1.0",
+  "description": "Optional official mod backend for Keysmith instruction deployment. Runtime mode replaces the system prompt; context mode adds project rules. Requires Claude Code 2.1.287+.",
+  "author": { "name": "Jia-Ethan" },
+  "homepage": "https://github.com/Jia-Ethan/claude-keysmith",
+  "repository": "https://github.com/Jia-Ethan/claude-keysmith",
+  "license": "MIT",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Injection mode",
+      "description": "runtime replaces the default system prompt with rules followed by append text. context preserves the system prompt and adds rules to the first-message context.",
+      "default": "runtime",
+      "options": ["runtime", "context"]
+    },
+    "rulesFile": {
+      "type": "string",
+      "title": "Rules file",
+      "description": "Absolute path to custom Markdown rules. Empty uses the plugin's examples/claude-project-rules.md.",
+      "default": ""
+    },
+    "appendFile": {
+      "type": "string",
+      "title": "Append file",
+      "description": "Absolute path to append text. Empty uses examples/claude-append-prompt.md. A custom empty file disables append text. Used by runtime mode and the optional Keysmith agent.",
+      "default": ""
+    },
+    "registerAgent": {
+      "type": "boolean",
+      "title": "Register Keysmith agent",
+      "description": "Offer keysmith:keysmith with these same rules and append text. Does not change other custom or built-in agents.",
+      "default": true
+    }
+  }
+}

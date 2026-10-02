@@ -8,6 +8,24 @@ permissions:
   contents: read
 
 jobs:
+  mods:
+    name: Native mods / ${{ matrix.os }} / Claude Code 2.1.287
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: npm install --global @anthropic-ai/claude-code@2.1.287
+      - run: python tools/test_mod.py
+
   pytest:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}

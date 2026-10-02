@@ -1,0 +1,4 @@
+{
+  "description": "Read Keysmith Markdown through the mods API, check legacy deployment conflicts, optionally register a Keysmith agent, replace the system prompt or add rule context, and expose /keysmith-status. No filesystem writes, process execution or network calls.",
+  "modules": ["./register.ts"]
+}

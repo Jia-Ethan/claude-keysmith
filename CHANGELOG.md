@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增可选 `keysmith` mod（Claude Code 2.1.287+）：runtime 替换＋追加、context 规则上下文、自定义绝对路径、动态 `keysmith:keysmith` agent 与 `/keysmith-status`。直接读取现有 Markdown；默认 CLI/GUI、JSON 契约和提示词内容不变。新增只读旧配置冲突检查、迁移说明及原生测试；不自动清理旧部署、不保证 Explore/Plan 继承。
 - `status --json` 增加 `competing_context`：wrapper 只绑父进程、Explore/Plan `omitClaudeMd`、`--agents` 载体是否在、`.claude/rules` 额外稿、`MEMORY.md`、以及 `--runtime` 时的 `host_upgrade_required`。`doctor --json` 仍是固定 9 键。
 - `docs/series-eval.md` 与 `breaktest/series-bank.txt`：四套 Keysmith 共用 cell ID。
 - `install --agents` / `uninstall --agents`：写入或移除 keysmith 拥有的 `agents/keysmith.md`（user：`~/.claude/agents/`，project/local：`<repo>/.claude/agents/`），给 Task / 自定义子 agent 用。只动带标记的自己那份文件，失败关闭拒绝覆盖用户原文。默认 install 行为不变。
