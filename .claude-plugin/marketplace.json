@@ -1,0 +1,17 @@
+{
+  "name": "keysmith-mods",
+  "metadata": {
+    "description": "通过 Claude Code 官方 mods API 部署 Keysmith 指令"
+  },
+  "owner": {
+    "name": "Jia-Ethan"
+  },
+  "plugins": [
+    {
+      "name": "keysmith",
+      "source": "./",
+      "description": "可选 Keysmith mod 后端，要求 Claude Code 2.1.287+",
+      "version": "0.1.0"
+    }
+  ]
+}
