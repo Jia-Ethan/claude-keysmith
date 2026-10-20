@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修复 Issue #30（Opus 5.5 / Sonnet 5.5 上任何对话直接触发 cyber）：默认项目规则去掉双用途框架措辞（`local lab workspace`、`CTF`、`pentest`、`authorized security research`、`in-scope work`、provenance 重述段与占位符全清单）。这些词出现在 system prompt 里会被上游分类器判为 `category: cyber`，导致连 `hi` 都返回空回复。实测：改前 opus-5-5/sonnet-5-5 对 8 类正常请求 72/72 全部被拦（0 字回复）；改后 0/72 误拦，正常代码、调试、排错请求全部正常交付。双用途任务本身在无 system prompt 时同样被拦，属模型线权重层，与本工具无关。
+- 新增回归断言：`install --runtime` 测试校验 bundled 项目规则不再含上述双用途框架措辞。
 - `status --json` 增加 `competing_context`：wrapper 只绑父进程、Explore/Plan `omitClaudeMd`、`--agents` 载体是否在、`.claude/rules` 额外稿、`MEMORY.md`、以及 `--runtime` 时的 `host_upgrade_required`。`doctor --json` 仍是固定 9 键。
 - `docs/series-eval.md` 与 `breaktest/series-bank.txt`：四套 Keysmith 共用 cell ID。
 - `install --agents` / `uninstall --agents`：写入或移除 keysmith 拥有的 `agents/keysmith.md`（user：`~/.claude/agents/`，project/local：`<repo>/.claude/agents/`），给 Task / 自定义子 agent 用。只动带标记的自己那份文件，失败关闭拒绝覆盖用户原文。默认 install 行为不变。
