@@ -13,6 +13,7 @@
   <a href="https://github.com/Jia-Ethan/claude-keysmith/releases/latest"><img src="https://img.shields.io/badge/Stable-v7.2-2f81f7?style=flat-square" alt="Stable v7.2" /></a>
   <img src="https://img.shields.io/badge/Python-3.8+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.8+" />
   <img src="https://img.shields.io/badge/license-MIT-6DB33F?style=flat-square" alt="MIT License" />
+  <a href="https://t.me/+xBqLYA65JPU1NjFk"><img src="https://img.shields.io/badge/Telegram-%E4%BA%A4%E6%B5%81%E7%BE%A4-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="Telegram" /></a>
 </p>
 
 <p>
@@ -122,7 +123,7 @@ macOS、Windows 与 Linux。需要 Python 3.8+。
 - [grok-keysmith](https://github.com/Jia-Ethan/grok-keysmith) — 给 Grok Build
 - [zcode-keysmith](https://github.com/Jia-Ethan/zcode-keysmith) — 给 ZCode
 
-官方反馈：[GitHub Discussions](https://github.com/Jia-Ethan/claude-keysmith/discussions/13) · 社区：[LINUX DO](https://linux.do)
+官方反馈：[GitHub Discussions](https://github.com/Jia-Ethan/claude-keysmith/discussions/13) · 社区：[LINUX DO](https://linux.do) · 交流群：[Telegram](https://t.me/+xBqLYA65JPU1NjFk)
 
 ## Star History
 
