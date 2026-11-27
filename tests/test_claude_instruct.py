@@ -377,8 +377,13 @@ def test_runtime_install_user_scope_writes_prompts_settings_and_wrapper(tmp_path
     assert append_prompt.exists()
     system_body = system_prompt.read_text(encoding="utf-8")
     assert "You are Claude Code working in this repository." in system_body
-    assert "local lab workspace" in system_body
+    assert "This repository is the workspace for the task at hand." in system_body
     assert "senior research engineer and technical writer" not in system_body
+    # Regression guard for Issue #30: wording that reads as dual-use framing in a
+    # system prompt trips the upstream cyber classifier on every turn, including
+    # plain greetings. Keep these terms out of the bundled project face.
+    for banned in ("local lab workspace", "CTF", "pentest", "authorized security research"):
+        assert banned not in system_body
     assert "intimate adult fiction" in append_prompt.read_text(encoding="utf-8")
 
     settings = (claude_dir / "settings.json").read_text(encoding="utf-8")
